@@ -248,6 +248,31 @@ describe('TrainingTargetsPage', () => {
         }
     );
 
+    it('forgets an offline SSH trainer without requesting remote cleanup', async () => {
+        const user = userEvent.setup();
+        const sshTrainer = { ...remoteTrainer, connection_mode: 'ssh' as const, ssh_host_alias: 'lost-host' };
+        let trainers = [sshTrainer];
+        let forgetLocally: string | null = null;
+        server.use(
+            http.get(REMOTE_TRAINERS_PATH, () => HttpResponse.json(trainers)),
+            http.delete(REMOTE_TRAINER_PATH, ({ request }) => {
+                forgetLocally = new URL(request.url).searchParams.get('forget_locally');
+                trainers = [];
+                return new HttpResponse(null, { status: 204 });
+            })
+        );
+
+        render(<TrainingTargetsPage />);
+
+        await user.click(await screen.findByRole('button', { name: `More actions ${sshTrainer.name}` }));
+        await user.click(await screen.findByRole('menuitem', { name: 'Delete' }));
+        await user.click(screen.getByRole('checkbox', { name: /Forget locally if the SSH host is gone/i }));
+        await user.click(screen.getByRole('button', { name: 'Forget locally' }));
+
+        expect(await screen.findByText('No training targets are configured.')).toBeInTheDocument();
+        expect(forgetLocally).toBe('true');
+    });
+
     it('deletes a configured remote trainer', async () => {
         const user = userEvent.setup();
         let trainers: (typeof remoteTrainer)[] = [remoteTrainer];

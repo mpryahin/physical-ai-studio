@@ -1,4 +1,6 @@
-import { AlertDialog, Flex, Text } from '@geti-ui/ui';
+import { useState } from 'react';
+
+import { AlertDialog, Checkbox, Flex, Text } from '@geti-ui/ui';
 
 import { $api } from '../../../api/client';
 import { getApiErrorMessage } from '../../../api/errors';
@@ -13,6 +15,7 @@ type DeleteRemoteTrainerDialogProps = {
 };
 
 export const DeleteRemoteTrainerDialog = ({ remoteTrainer, onDeleted, onCancel }: DeleteRemoteTrainerDialogProps) => {
+    const [forgetLocally, setForgetLocally] = useState(false);
     const deleteMutation = $api.useMutation('delete', '/api/remote-trainers/{remote_trainer_id}', {
         meta: {
             invalidates: [['get', '/api/remote-trainers']],
@@ -28,6 +31,7 @@ export const DeleteRemoteTrainerDialog = ({ remoteTrainer, onDeleted, onCancel }
             {
                 params: {
                     path: { remote_trainer_id: remoteTrainer.id },
+                    query: { forget_locally: forgetLocally },
                 },
             },
             {
@@ -40,7 +44,7 @@ export const DeleteRemoteTrainerDialog = ({ remoteTrainer, onDeleted, onCancel }
         <AlertDialog
             title='Delete remote trainer'
             variant='warning'
-            primaryActionLabel='Delete'
+            primaryActionLabel={forgetLocally ? 'Forget locally' : 'Delete'}
             cancelLabel='Close'
             onCancel={onCancel}
             onPrimaryAction={remove}
@@ -51,6 +55,12 @@ export const DeleteRemoteTrainerDialog = ({ remoteTrainer, onDeleted, onCancel }
                     Delete {remoteTrainer.name}? Submitted remote jobs retain their pinned endpoint URL and are not
                     changed.
                 </Text>
+                {remoteTrainer.connection_mode === 'ssh' && (
+                    <Checkbox isSelected={forgetLocally} onChange={setForgetLocally}>
+                        Forget locally if the SSH host is gone. This skips cleanup of its container, volume, and remote
+                        jobs. Stop pending or running jobs first.
+                    </Checkbox>
+                )}
                 {error && <Text UNSAFE_className={classes.errorMessage}>{error}</Text>}
             </Flex>
         </AlertDialog>

@@ -409,9 +409,23 @@ describe('TrainingRow', () => {
         expect(screen.getByRole('menuitem', { name: 'Delete' }).closest('[aria-disabled]')).toBeNull();
     });
 
-    it('renders the Stop button only when status is running', () => {
-        renderTrainingRow({ status: 'running' });
-        expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
+    it.each(['running', 'pending'] as const)('allows stopping a %s job', async (status) => {
+        const user = userEvent.setup();
+        const onInterrupt = vi.fn();
+        renderTrainingRow({ status }, { onInterrupt });
+        await user.click(screen.getByRole('button', { name: 'Stop' }));
+        await user.click(screen.getByRole('button', { name: 'Stop' }));
+        expect(onInterrupt).toHaveBeenCalledOnce();
+    });
+
+    it('warns that stopping an unreachable remote job may not stop the remote work', async () => {
+        const user = userEvent.setup();
+        renderTrainingRow({
+            status: 'running',
+            payload: getMockedTrainJobPayload({ training_target: 'remote', remote_trainer_id: remoteTrainer.id }),
+        });
+        await user.click(screen.getByRole('button', { name: 'Stop' }));
+        expect(screen.getByText(/remote work may continue/i)).toBeInTheDocument();
     });
 
     it('renders no Stop button when status is not running', () => {
