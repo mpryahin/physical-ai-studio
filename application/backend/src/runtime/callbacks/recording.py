@@ -156,6 +156,9 @@ class RecordingCallback:
     def on_tick(self, event: TickEvent) -> None:
         if self._follower_source() == "hold":
             return
+        # Interpolated ticks carry no camera frames; a dataset row needs them.
+        if not event.source_updated:
+            return
         if event.action_sent is None or not self._joint_names:
             return
         observation: dict[str, Any] = dict(

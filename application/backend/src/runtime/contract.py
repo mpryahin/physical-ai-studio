@@ -8,6 +8,7 @@ from uuid import UUID  # noqa: TC003 — pydantic resolves annotations from modu
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
+from runtime.interpolation import MAX_INTERPOLATION_MULTIPLIER, MIN_INTERPOLATION_MULTIPLIER
 from schemas import InferenceDevice
 
 if TYPE_CHECKING:
@@ -68,6 +69,19 @@ class StartRecordingCommand(CommandBase):
     task: str
 
 
+class ReturnHomeCommand(CommandBase):
+    """Glide the follower back to the pose it had when the session started, then hold."""
+
+    command: Literal["return_home"] = "return_home"
+
+
+class SetInterpolationCommand(CommandBase):
+    """Send ``multiplier`` interpolated robot commands per action-source cycle."""
+
+    command: Literal["set_interpolation"] = "set_interpolation"
+    multiplier: int = Field(ge=MIN_INTERPOLATION_MULTIPLIER, le=MAX_INTERPOLATION_MULTIPLIER)
+
+
 class SaveEpisodeCommand(BaseModel):
     command: Literal["save_episode"] = "save_episode"
     request_id: str
@@ -86,6 +100,8 @@ Command = Annotated[
     | StartTaskCommand
     | StopTaskCommand
     | StartRecordingCommand
+    | ReturnHomeCommand
+    | SetInterpolationCommand
     | SaveEpisodeCommand
     | DiscardEpisodeCommand,
     Field(discriminator="command"),
@@ -109,6 +125,8 @@ class StateData(BaseModel):
     dataset_loaded: bool | None = None
     is_recording: bool | None = None
     episodes_recorded: int | None = None
+    returning_home: bool | None = None
+    interpolation_multiplier: int | None = None
 
 
 class StateEvent(BaseModel):

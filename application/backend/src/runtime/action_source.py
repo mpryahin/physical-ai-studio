@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -10,7 +11,9 @@ from physicalai.runtime import WorkerDiedError
 from runtime.contract import (
     ErrorEvent,
     LoadModelCommand,
+    ReturnHomeCommand,
     SetFollowerSourceCommand,
+    SetInterpolationCommand,
     StartRecordingCommand,
     StartTaskCommand,
     StateData,
@@ -29,13 +32,28 @@ if TYPE_CHECKING:
 
     from runtime.callbacks.recording import RecordingState
     from runtime.contract import CommandMailbox, EventSink, FollowerSource
+    from runtime.interpolation import AdjustableLinearInterpolator
     from runtime.policy_loader import ModelIdentity, ObservationSnapshot
+
+# Same duration and collision threshold as RobotRuntime's return_to_initial_state.
+RETURN_HOME_DURATION_S = 2.5
+RETURN_HOME_MAX_TRACKING_ERROR = 0.15
+
+
+@dataclass
+class _ReturnHome:
+    start: np.ndarray
+    target: np.ndarray
+    travel: float
+    steps: int
+    last_command: np.ndarray
+    step: int = 0
 
 
 class StudioActionSource:
     """Select the action sent by RobotRuntime from Studio's current mode."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 — keyword-only collaborators
         self,
         *,
         follower: Robot,
@@ -45,14 +63,19 @@ class StudioActionSource:
         fps: float,
         camera_keys: Sequence[str] = (),
         models_dir: Path | None = None,
+        interpolator: AdjustableLinearInterpolator | None = None,
     ) -> None:
         self._follower = follower
         self._leader = leader
         self._mailbox = mailbox
         self._event_sink = event_sink
+        self._fps = fps
+        self._interpolator = interpolator
         self._max_leader_failures = max(1, int(3 * fps))
         self._follower_source: FollowerSource = "hold"
         self._hold_target: np.ndarray | None = None
+        self._home_target: np.ndarray | None = None
+        self._return_home: _ReturnHome | None = None
         self._last_leader_action: np.ndarray | None = None
         self._last_leader_timestamp: float | None = None
         self._leader_failures = 0
@@ -99,6 +122,8 @@ class StudioActionSource:
             dataset_loaded=None if recording is None else recording.dataset_loaded,
             is_recording=None if recording is None else recording.is_recording,
             episodes_recorded=None if recording is None else recording.episodes_recorded,
+            returning_home=self._return_home is not None,
+            interpolation_multiplier=None if self._interpolator is None else self._interpolator.requested_multiplier,
         )
 
     def connect(self, *, bus: object, session_id: str) -> None:
@@ -118,12 +143,16 @@ class StudioActionSource:
     ) -> np.ndarray:
         self._last_robot_state = robot_state
         self._last_camera_frames = camera_frames
+        if self._home_target is None:
+            self._home_target = np.array(robot_state.joint_positions, dtype=np.float32, copy=True)
         self._drain_commands(robot_state)
         if self._hold_target is None:
             self._hold_target = np.array(robot_state.joint_positions, dtype=np.float32, copy=True)
 
         leader_action = self._read_leader(robot_state) if self._leader_reads_enabled else self._last_leader_action
         policy_action = self._policy_action(robot_state, camera_frames, step)
+        if self._return_home is not None:
+            self._advance_return_home(robot_state)
 
         if self._follower_source == "teleop" and leader_action is not None:
             return leader_action
@@ -136,6 +165,8 @@ class StudioActionSource:
         self._bus = None
         self._session_id = None
         self._hold_target = None
+        self._home_target = None
+        self._return_home = None
         self._last_leader_action = None
         self._last_leader_timestamp = None
         self._leader_failures = 0
@@ -222,6 +253,9 @@ class StudioActionSource:
 
     def _drain_commands(self, robot_state: RobotObservation) -> None:
         for command in self._mailbox.drain():
+            if isinstance(command, StartTaskCommand | StopTaskCommand | SetFollowerSourceCommand):
+                # Any explicit mode change takes the arm away from a return in progress.
+                self._cancel_return_home()
             if isinstance(command, LoadModelCommand):
                 self._handle_load_model(command)
             elif isinstance(command, StartTaskCommand):
@@ -232,6 +266,84 @@ class StudioActionSource:
                 self._handle_set_follower_source(command, robot_state)
             elif isinstance(command, StartRecordingCommand):
                 self._handle_start_recording(command)
+            elif isinstance(command, ReturnHomeCommand):
+                self._handle_return_home(robot_state)
+            elif isinstance(command, SetInterpolationCommand):
+                self._handle_set_interpolation(command)
+
+    def _handle_return_home(self, robot_state: RobotObservation) -> None:
+        if self._home_target is None:
+            return
+        self._cancel_arming()
+        self._follower_source = "hold"
+        current = np.array(robot_state.joint_positions, dtype=np.float32, copy=True)
+        travel = float(np.max(np.abs(self._home_target - current), initial=0.0))
+        if travel == 0.0:
+            self._return_home = None
+            self._hold_target = self._home_target.copy()
+        else:
+            self._return_home = _ReturnHome(
+                start=current,
+                target=self._home_target.copy(),
+                travel=travel,
+                steps=max(int(RETURN_HOME_DURATION_S * self._fps), 1),
+                last_command=current,
+            )
+            self._hold_target = current.copy()
+            logger.info("Returning follower to its session start pose over {:.1f}s", RETURN_HOME_DURATION_S)
+        self._emit_state()
+
+    def _advance_return_home(self, robot_state: RobotObservation) -> None:
+        """Step the hold target towards home, aborting if the arm stops following."""
+        move = self._return_home
+        if move is None:
+            return
+        measured = np.asarray(robot_state.joint_positions, dtype=np.float32)
+        if move.step > 0:
+            error = np.abs(measured - move.last_command) / move.travel
+            worst = int(np.argmax(error))
+            if error[worst] > RETURN_HOME_MAX_TRACKING_ERROR:
+                self._abort_return_home(measured, joint_index=worst, error=float(error[worst]))
+                return
+        move.step += 1
+        t = move.step / move.steps
+        move.last_command = (move.start * (1.0 - t) + move.target * t).astype(np.float32)
+        self._hold_target = move.last_command.copy()
+        if move.step >= move.steps:
+            self._return_home = None
+            self._emit_state()
+
+    def _abort_return_home(self, measured: np.ndarray, *, joint_index: int, error: float) -> None:
+        self._return_home = None
+        # Hold where the arm actually is so the servos stop pushing against whatever blocked it.
+        self._hold_target = measured.copy()
+        joint_names = list(self._follower.joint_names)
+        joint = joint_names[joint_index] if joint_index < len(joint_names) else str(joint_index)
+        message = (
+            f"Return home stopped: joint '{joint}' is off by {error:.0%} of the move (possible collision). "
+            "Holding the current pose."
+        )
+        logger.warning(message)
+        self._event_sink.emit(ErrorEvent(message=message, error_code="return_home_aborted"))
+        self._emit_state()
+
+    def _cancel_return_home(self) -> None:
+        if self._return_home is None:
+            return
+        self._return_home = None
+        self._emit_state()
+
+    def _handle_set_interpolation(self, command: SetInterpolationCommand) -> None:
+        if self._interpolator is None:
+            self._event_sink.emit(
+                ErrorEvent(
+                    message="This runtime session does not support interpolation.",
+                    error_code="interpolation_unsupported",
+                )
+            )
+            return
+        self._interpolator.request_multiplier(command.multiplier)
+        self._emit_state()
 
     def _handle_load_model(self, command: LoadModelCommand) -> None:
         if not command.force and self._loaded_identity == model_identity(command):

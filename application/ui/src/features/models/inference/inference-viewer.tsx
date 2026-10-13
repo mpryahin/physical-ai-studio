@@ -11,6 +11,7 @@ import {
     Item,
     Link,
     ProgressCircle,
+    Slider,
     StatusLight,
     Switch,
     Text,
@@ -28,6 +29,9 @@ interface InferenceViewerProps {
     tasks: string[];
 }
 
+const MIN_INTERPOLATION = 1;
+const MAX_INTERPOLATION = 5;
+
 export const InferenceViewer = ({ tasks }: InferenceViewerProps) => {
     const { project_id } = useProjectId();
 
@@ -35,6 +39,8 @@ export const InferenceViewer = ({ tasks }: InferenceViewerProps) => {
     // stay allowed: otherwise the combo box discards typed text when it loses focus.
     const [task, setTask] = useState<string>(tasks[0] ?? '');
     const [isEmptyPromptDialogOpen, setIsEmptyPromptDialogOpen] = useState(false);
+    // Local value while dragging or until the session confirms the new multiplier.
+    const [pendingInterpolation, setPendingInterpolation] = useState<number | null>(null);
 
     const {
         model,
@@ -43,6 +49,8 @@ export const InferenceViewer = ({ tasks }: InferenceViewerProps) => {
         startTask,
         stopTask,
         setFollowerSource,
+        returnHome,
+        setInterpolation,
         environment,
         observation,
         inferenceDevice,
@@ -103,6 +111,25 @@ export const InferenceViewer = ({ tasks }: InferenceViewerProps) => {
                     >
                         Teleoperate
                     </Switch>
+                    <Slider
+                        label='Interpolation'
+                        labelPosition='side'
+                        width='size-3000'
+                        minValue={MIN_INTERPOLATION}
+                        maxValue={MAX_INTERPOLATION}
+                        step={1}
+                        value={pendingInterpolation ?? state.interpolation_multiplier}
+                        getValueLabel={(value) => `${value}x`}
+                        onChange={setPendingInterpolation}
+                        onChangeEnd={(value) => {
+                            if (value === state.interpolation_multiplier) {
+                                setPendingInterpolation(null);
+                                return;
+                            }
+                            setInterpolation.mutate(value, { onSettled: () => setPendingInterpolation(null) });
+                        }}
+                        isFilled
+                    />
                     <ButtonGroup>
                         {exportUrl !== undefined && (
                             <Button
@@ -114,6 +141,24 @@ export const InferenceViewer = ({ tasks }: InferenceViewerProps) => {
                             >
                                 <DownloadIcon />
                                 Runtime export
+                            </Button>
+                        )}
+                        {state.returning_home ? (
+                            <Button
+                                variant='secondary'
+                                isPending={setFollowerSource.isPending}
+                                onPress={() => setFollowerSource.mutate('hold')}
+                            >
+                                Stop Return
+                            </Button>
+                        ) : (
+                            <Button
+                                variant='secondary'
+                                isPending={returnHome.isPending}
+                                isDisabled={startTask.isPending || stopTask.isPending || setFollowerSource.isPending}
+                                onPress={() => returnHome.mutate()}
+                            >
+                                Return Home
                             </Button>
                         )}
                         {state.follower_source === 'policy' ? (

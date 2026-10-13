@@ -23,6 +23,8 @@ export interface RuntimeSessionState {
     dataset_loaded: boolean;
     is_recording: boolean;
     episodes_recorded: number;
+    returning_home: boolean;
+    interpolation_multiplier: number;
 }
 
 const createRuntimeSessionState = (): RuntimeSessionState => ({
@@ -34,6 +36,8 @@ const createRuntimeSessionState = (): RuntimeSessionState => ({
     dataset_loaded: false,
     is_recording: false,
     episodes_recorded: 0,
+    returning_home: false,
+    interpolation_multiplier: 1,
 });
 
 interface RuntimeApiJsonResponse<T = RuntimeSessionState> {
@@ -68,6 +72,8 @@ type RuntimeSessionContextValue = {
     startTask: MutationResult<string>;
     stopTask: MutationResult;
     setFollowerSource: MutationResult<FollowerSource>;
+    returnHome: MutationResult;
+    setInterpolation: MutationResult<number>;
     startEpisode: MutationResult<string>;
     saveEpisode: MutationResult;
     discardEpisode: MutationResult;
@@ -159,6 +165,8 @@ export const RuntimeSessionProvider = (props: RuntimeSessionProviderProps) => {
                     dataset_loaded: next.dataset_loaded ?? false,
                     is_recording: next.is_recording ?? false,
                     episodes_recorded: next.episodes_recorded ?? 0,
+                    returning_home: next.returning_home ?? false,
+                    interpolation_multiplier: next.interpolation_multiplier ?? 1,
                 });
             }
             if (message.event === 'error') {
@@ -230,6 +238,24 @@ export const RuntimeSessionProvider = (props: RuntimeSessionProviderProps) => {
             ),
     });
 
+    const returnHome = useMutation({
+        meta: { skipInvalidation: true },
+        mutationFn: async () =>
+            socket.sendJsonMessageAndWait<RuntimeApiJsonResponse>(
+                { event: 'return_home', data: {} },
+                ({ event, data }) => event === 'state' && data?.follower_source === 'hold'
+            ),
+    });
+
+    const setInterpolation = useMutation({
+        meta: { skipInvalidation: true },
+        mutationFn: async (multiplier: number) =>
+            socket.sendJsonMessageAndWait<RuntimeApiJsonResponse>(
+                { event: 'set_interpolation', data: { multiplier } },
+                ({ event, data }) => event === 'state' && data?.interpolation_multiplier === multiplier
+            ),
+    });
+
     const startEpisode = useMutation({
         meta: { skipInvalidation: true },
         mutationFn: async (task: string) =>
@@ -275,6 +301,8 @@ export const RuntimeSessionProvider = (props: RuntimeSessionProviderProps) => {
                 startTask,
                 stopTask,
                 setFollowerSource,
+                returnHome,
+                setInterpolation,
                 startEpisode,
                 saveEpisode,
                 discardEpisode,

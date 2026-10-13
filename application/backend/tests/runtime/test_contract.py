@@ -14,7 +14,13 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from runtime.contract import CommandAdapter, LoadDatasetCommand, LoadModelCommand
+from runtime.contract import (
+    CommandAdapter,
+    LoadDatasetCommand,
+    LoadModelCommand,
+    ReturnHomeCommand,
+    SetInterpolationCommand,
+)
 from schemas import InferenceBackend
 
 
@@ -80,3 +86,22 @@ def test_commands_round_trip_through_json() -> None:
     restored = CommandAdapter.validate_python(command.model_dump(mode="json"))
 
     assert restored == command
+
+
+def test_return_home_takes_no_arguments() -> None:
+    command = CommandAdapter.validate_python({"command": "return_home"})
+
+    assert isinstance(command, ReturnHomeCommand)
+
+
+def test_set_interpolation_carries_a_multiplier() -> None:
+    command = CommandAdapter.validate_python({"command": "set_interpolation", "multiplier": 3})
+
+    assert isinstance(command, SetInterpolationCommand)
+    assert command.multiplier == 3
+
+
+@pytest.mark.parametrize("multiplier", [0, 6])
+def test_set_interpolation_rejects_an_out_of_range_multiplier(multiplier: int) -> None:
+    with pytest.raises(ValidationError, match="multiplier"):
+        CommandAdapter.validate_python({"command": "set_interpolation", "multiplier": multiplier})

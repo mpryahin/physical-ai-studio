@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -63,6 +64,19 @@ def test_hold_ticks_are_not_recorded() -> None:
     callback = _callback(recording, source="hold")
 
     callback.on_tick(_tick(positions=[1.0], action=[9.0]))
+
+    mutation.add_frame.assert_not_called()
+
+
+def test_interpolated_ticks_are_not_recorded() -> None:
+    mutation = MagicMock()
+    recording = RecordingState()
+    recording.attach_mutation(mutation)
+    recording.start("pick")
+    callback = _callback(recording)
+    tick = _tick(positions=[1.0], action=[9.0])
+
+    callback.on_tick(dataclasses.replace(tick, source_updated=False))
 
     mutation.add_frame.assert_not_called()
 

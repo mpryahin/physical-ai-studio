@@ -64,14 +64,20 @@ const mockSession = ({
     followerSource = 'hold',
     hasLeader = true,
     readyForInference = true,
+    returningHome = false,
+    interpolationMultiplier = 1,
 }: {
     followerSource?: 'hold' | 'teleop' | 'policy';
     hasLeader?: boolean;
     readyForInference?: boolean;
+    returningHome?: boolean;
+    interpolationMultiplier?: number;
 } = {}) => {
     const startTask = mutation();
     const stopTask = mutation();
     const setFollowerSource = mutation();
+    const returnHome = mutation();
+    const setInterpolation = mutation();
 
     vi.mocked(useRuntimeSession).mockReturnValue({
         model,
@@ -85,16 +91,20 @@ const mockSession = ({
             dataset_loaded: false,
             is_recording: false,
             episodes_recorded: 0,
+            returning_home: returningHome,
+            interpolation_multiplier: interpolationMultiplier,
         },
         startTask,
         stopTask,
         setFollowerSource,
+        returnHome,
+        setInterpolation,
         environment: environmentWithLeader,
         observation: createRef<Record<string, number> | undefined>(),
         inferenceDevice: { backend: 'pytorch', device: 'cpu' },
     } as unknown as ReturnType<typeof useRuntimeSession>);
 
-    return { startTask, stopTask, setFollowerSource };
+    return { startTask, stopTask, setFollowerSource, returnHome, setInterpolation };
 };
 
 const renderViewer = (tasks: string[] = ['pick the cube']) =>
@@ -176,6 +186,43 @@ describe('InferenceViewer', () => {
 
         expect(setFollowerSource.mutate).toHaveBeenCalledWith('teleop');
         expect(stopTask.mutate).not.toHaveBeenCalled();
+    });
+
+    it('sends the follower home', async () => {
+        const user = userEvent.setup();
+        const { returnHome } = mockSession({ followerSource: 'policy' });
+
+        renderViewer();
+
+        await user.click(await screen.findByRole('button', { name: 'Return Home' }));
+
+        expect(returnHome.mutate).toHaveBeenCalled();
+    });
+
+    it('stops a return in progress by switching to hold', async () => {
+        const user = userEvent.setup();
+        const { setFollowerSource } = mockSession({ returningHome: true });
+
+        renderViewer();
+
+        await user.click(await screen.findByRole('button', { name: 'Stop Return' }));
+
+        expect(setFollowerSource.mutate).toHaveBeenCalledWith('hold');
+    });
+
+    it('shows the session interpolation multiplier and changes it', async () => {
+        const user = userEvent.setup();
+        const { setInterpolation } = mockSession({ interpolationMultiplier: 2 });
+
+        renderViewer();
+
+        const slider = await screen.findByRole('slider', { name: 'Interpolation' });
+        expect(slider).toHaveValue('2');
+
+        await user.click(slider);
+        await user.keyboard('{ArrowRight}');
+
+        expect(setInterpolation.mutate).toHaveBeenCalledWith(3, expect.anything());
     });
 });
 

@@ -28,6 +28,7 @@ from runtime.contract import (
     StateEvent,
 )
 from runtime.dataset_features import build_lerobot_dataset_features
+from runtime.interpolation import AdjustableLinearInterpolator
 from settings import get_settings
 
 if TYPE_CHECKING:
@@ -79,6 +80,7 @@ class RuntimeSession:
         self._leader: Robot | None = None
         self._cameras: dict[str, Camera] = {}
         self._action_source: StudioActionSource | None = None
+        self._interpolator = AdjustableLinearInterpolator()
         self._stream_callback: StreamCallback | None = None
         self._recording = RecordingState()
         self._recording_callback: RecordingCallback | None = None
@@ -109,6 +111,7 @@ class RuntimeSession:
             event_sink=self._event_sink,
             fps=float(init_args["fps"]),
             camera_keys=tuple(self._cameras),
+            interpolator=self._interpolator,
         )
         self._action_source.bind_recording(self._recording)
         action_source = self._action_source
@@ -139,6 +142,7 @@ class RuntimeSession:
             cameras=self._cameras,
             fps=float(self._document["init_args"]["fps"]),
             callbacks=[self._stream_callback, self._recording_callback],
+            interpolator=self._interpolator,
         )
         if self._disconnect_requested:
             self._runtime.stop()

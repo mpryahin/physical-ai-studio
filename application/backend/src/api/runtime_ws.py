@@ -98,6 +98,8 @@ _RUNTIME_PUBLICATIONS = frozenset(
         "stop_task",
         "load_dataset",
         "start_recording",
+        "return_home",
+        "set_interpolation",
     }
 )
 _RUNTIME_REQUESTS = frozenset({"save_episode", "discard_episode"})
