@@ -13,6 +13,10 @@ _ERROR_MARKERS = {
     "APT_UPDATE_FAILED",
     "PACKAGE_MANAGER_BROKEN",
     "DOCKER_INSTALL_FAILED",
+    "DOCKER_PROXY_CONFIG_FAILED",
+    "DOCKER_PROXY_UNAVAILABLE",
+    "BUILDX_INSTALL_FAILED",
+    "BUILDX_UNAVAILABLE",
     "NVIDIA_DRIVER_INSTALL_FAILED",
     "NVIDIA_DRIVER_UNAVAILABLE",
     "NVIDIA_TOOLKIT_INSTALL_FAILED",
@@ -34,8 +38,8 @@ _ERROR_MARKERS = {
 }
 
 
-async def install(transport: SshTransport) -> str:
-    """Install host dependencies, returning ``ready``, ``reboot_required`` or a safe failure marker."""
+async def install(transport: SshTransport, *, check_only: bool = False) -> str:
+    """Install or check host dependencies, returning a safe readiness or failure marker."""
     # Remote mktemp creates a private directory; the returned path is checked before use.
     temporary = await transport.run_command(["mktemp", "-d", "/tmp/physicalai-installer.XXXXXXXX"])  # noqa: S108 # nosec B108
     directory = temporary.first_line()
@@ -49,8 +53,11 @@ async def install(transport: SshTransport) -> str:
     try:
         await transport.upload_file(_SCRIPT, script)
         # Package managers emit unbounded logs: keep them on the host and return only the tail.
-        command = 'bash "$1" --install >"$2" 2>&1; status=$?; tail -n 20 "$2"; exit "$status"'
-        result = await transport.run_command(["bash", "-c", command, "_", script, log], timeout=_INSTALL_TIMEOUT_S)
+        command = 'bash "$1" "$3" >"$2" 2>&1; status=$?; tail -n 20 "$2"; exit "$status"'
+        result = await transport.run_command(
+            ["bash", "-c", command, "_", script, log, "--check" if check_only else "--install"],
+            timeout=_INSTALL_TIMEOUT_S,
+        )
         if result.ok:
             return "ready"
         if result.exit_status == 10:

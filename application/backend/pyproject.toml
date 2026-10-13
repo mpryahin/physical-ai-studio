@@ -1,6 +1,6 @@
 [project]
 name = "physicalai-studio"
-version = "0.2.0"
+version = "0.3.0"
 description = "Physical AI Studio"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
@@ -10,10 +10,10 @@ dependencies = [
   "cv2-enumerate-cameras",
   'harvesters; sys_platform != "darwin"',
   "fastapi[standard]<1",
-  "physicalai[robots, capture, transport]",
+  "physicalai[robots, capture, transport]~=0.3.0",
   "eclipse-zenoh==1.9.0",
   "msgpack==1.2.1",
-  "physicalai-train[pi05,smolvla,rldx1]",
+  "physicalai-train[pi05,smolvla,rldx1]~=0.3.0",
   "lerobot[dataset,feetech]==0.6.0",
   "numpy",
   "websockets",
@@ -22,7 +22,7 @@ dependencies = [
   "aiortc>=1.13.0",
   "pydantic>=2.12,<2.13",
   "pydantic-settings>=2.10.1",
-  "sqlalchemy>=2.0.43",
+  "sqlalchemy>=2.0.43,<2.1",
   "aiosqlite~=0.21",
   "alembic>=1.16.5",
   "click>=8.3.0",
@@ -35,7 +35,7 @@ dependencies = [
   "sse-starlette>=2.0.0",
   "huggingface-hub>=0.27",
   "psutil~=7.2",
-  "physicalai-studio-plugin>=0.2.0",
+  "physicalai-studio-plugin~=0.3.0",
   "asyncssh~=2.24",
   "sigstore>=4.0,<5",
 ]
@@ -130,7 +130,7 @@ explicit = false
 
 [tool.uv.sources]
 physicalai-train = { path = "../../library", editable = true }
-physicalai = { git = "https://github.com/openvinotoolkit/physicalai.git", rev = "0ad4548e1455a9b6a79aa870ae2529f411739433" }
+physicalai = { git = "https://github.com/openvinotoolkit/physicalai.git", rev = "f90b3767cfa99e243fc7b277b9faa242c87db213" }
 # Keep torchao on PyPI for all extras.
 # The XPU index publishes `torchao` local-version wheels (e.g. `+xpu`) that can
 # be selected via unsafe-best-match even for non-XPU installs (like `--extra cuda`),
@@ -180,7 +180,8 @@ default-groups = ["all"]
 exclude-newer = "7 days"
 # FIXME: lightning: disable cutoff so the CVE-2026-58659 fix (2.6.6) resolves despite being <7 days old
 # FIXME: openvino*: disable cutoff so 2026.4.0 required by physicalai resolves despite being <7 days old
-exclude-newer-package = {pyrealsense2 = "1 days", markupsafe = false, physicalai-rebot-b601-plugin = false, physicalai-stararm-plugin = false, physicalai-bimanual-so101-plugin = false, physicalai-lerobot-plugin = false, physicalai-studio-plugin = false, lightning = false, openvino = false, openvino-tokenizers = false}
+# FIXME: pynokhwa: disable cutoff so 0.1.4 required by physicalai resolves despite being <7 days old
+exclude-newer-package = {pyrealsense2 = "1 days", markupsafe = false, physicalai-rebot-b601-plugin = false, physicalai-stararm-plugin = false, physicalai-bimanual-so101-plugin = false, physicalai-lerobot-plugin = false, physicalai-studio-plugin = false, lightning = false, openvino = false, openvino-tokenizers = false, pynokhwa = false}
 # The pytorch-xpu index is non-explicit (explicit = false) because
 # transitive deps like triton-xpu only exist on the XPU index.
 # unsafe-best-match is required because PyTorch indexes can host stale

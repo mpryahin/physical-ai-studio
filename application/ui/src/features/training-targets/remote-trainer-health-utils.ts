@@ -4,12 +4,12 @@ export type CheckState = 'positive' | 'yellow' | 'negative' | 'neutral';
 
 /**
  * A re-check in flight keeps showing the last-known status rather than
- * flipping to "Checking…"/neutral — only the very first check (no health
+ * flipping to "Checking"/neutral — only the very first check (no health
  * reported yet) reads as checking.
  */
 export const healthLabel = (health?: SchemaRemoteTrainerHealth, isChecking = false) => {
-    if (health === undefined) return isChecking ? 'Checking…' : 'Not checked';
-    if (health.status === 'starting') return health.reason_code ? `Starting: ${health.reason_code}` : 'Starting…';
+    if (health === undefined) return isChecking ? 'Checking' : 'Not checked';
+    if (health.status === 'starting') return health.reason_code ? `Starting: ${health.reason_code}` : 'Starting';
     if (health.reason_code === 'check_failed') return 'Check failed';
     return health.status === 'healthy' ? 'Healthy' : health.status === 'degraded' ? 'Degraded' : 'Unreachable';
 };
@@ -42,7 +42,10 @@ export const healthDescription = (health?: SchemaRemoteTrainerHealth) => {
         case 'check_failed':
             return 'Studio could not complete the health check. Try again.';
         case 'docker_unavailable':
-            return 'Studio-managed training requires Docker to be installed and running on the SSH host.';
+            return (
+                'Docker must be running and accessible to the SSH user. ' +
+                'If Docker was just installed, log out of the SSH host and back in, then retry setup.'
+            );
         case 'accelerator_unavailable':
             return 'Studio-managed training requires a working CUDA or XPU driver on the SSH host.';
         case 'container_accelerator_unavailable':
@@ -50,7 +53,7 @@ export const healthDescription = (health?: SchemaRemoteTrainerHealth) => {
         case 'reboot_required':
             return 'GPU prerequisites were installed. Confirm a host reboot to finish setup.';
         case 'relogin_required':
-            return 'Reconnect SSH to activate Docker or GPU access, then retry installation.';
+            return 'Log out of the SSH host and back in to activate Docker or GPU group access, then retry setup.';
         case 'active_containers':
             return 'Host setup cannot modify Docker while containers are running.';
         case 'reboot_blocked_active_containers':
@@ -71,6 +74,14 @@ export const healthDescription = (health?: SchemaRemoteTrainerHealth) => {
             return 'An Intel GPU package failed checksum verification; installation was stopped.';
         case 'docker_install_failed':
             return 'Docker installation failed: the package is unavailable or apt failed.';
+        case 'docker_proxy_config_failed':
+            return 'Could not configure Docker to use the SSH host’s proxy for image pulls. Check backend logs.';
+        case 'docker_proxy_unavailable':
+            return 'Docker does not use the SSH host’s proxy for image pulls.';
+        case 'buildx_install_failed':
+            return 'Could not install the Docker Buildx CLI plugin on the SSH host. Check backend logs.';
+        case 'buildx_unavailable':
+            return 'Docker Buildx is required on the SSH host to resolve trainer images.';
         case 'gpu_ambiguous':
             return 'Exactly one NVIDIA or Intel GPU vendor must be present on the SSH host.';
         case 'unsupported_os':

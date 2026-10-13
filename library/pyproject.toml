@@ -17,7 +17,7 @@ packages = ["src/physicalai"]
 # ============================================================================ #
 [project]
 name = "physicalai-train"
-version = "0.2.0"
+version = "0.3.0"
 requires-python = ">=3.12, <3.15"
 description = "A package for training vision-action models"
 readme = "README.md"
@@ -45,7 +45,7 @@ dependencies = [
     # Provides the `physicalai` CLI host and the `physicalai.cli._spec`
     # SubcommandSpec contract that the studio subcommands plug into. Must be a
     # release that ships the CLI host; older runtimes lack `physicalai.cli`.
-    "physicalai>=0.1.0",
+    "physicalai~=0.3.0",
 ]
 
 [project.optional-dependencies]
@@ -109,6 +109,15 @@ rldx1 = [
     "peft>=0.13.0,<1.0.0",
     "diffusers>=0.38.0",
 ]
+
+# NVIDIA Cosmos 3 foundation policy
+cosmos3 = [
+    "diffusers>=0.40.0",
+    "transformers>=5.15.1",
+    "peft>=0.13.0,<1.0.0",
+    "safetensors>=0.4.3,<1.0.0",
+    "Pillow>=10.0.0,<13.0.0",
+]
 # Neural Network Compression Framework (optional, for post-export quantization hooks)
 nncf = ["nncf>=3.0.0"]
 
@@ -138,6 +147,7 @@ policies = [
     "physicalai-train[molmoact2]",
     "physicalai-train[rldx1]",
     "physicalai-train[xr0]",
+    "physicalai-train[cosmos3]",
 ]
 
 # All optional dependencies except hardware (torch) variant.
@@ -187,7 +197,8 @@ dev = [
 exclude-newer = "7 days"
 # FIXME: lightning: disable cutoff so the CVE-2026-58659 fix (2.6.6) resolves despite being <7 days old
 # FIXME: openvino*: disable cutoff so 2026.4.0 required by physicalai resolves despite being <7 days old
-exclude-newer-package = { pyrealsense2 = "1 days", markupsafe = false, lightning = false, openvino = false, openvino-tokenizers = false }
+# FIXME: pynokhwa: disable cutoff so 0.1.4 required by physicalai resolves despite being <7 days old
+exclude-newer-package = { pyrealsense2 = "1 days", markupsafe = false, lightning = false, openvino = false, openvino-tokenizers = false, pynokhwa = false }
 index-strategy = "unsafe-best-match"
 override-dependencies = [
     # executorch>=1.1.0 requires pytest<9.0 (its own test-suite constraint),
@@ -243,7 +254,7 @@ explicit = false
 
 # PyTorch sources configuration
 [tool.uv.sources]
-physicalai = { git = "https://github.com/openvinotoolkit/physicalai.git", rev = "0ad4548e1455a9b6a79aa870ae2529f411739433" }
+physicalai = { git = "https://github.com/openvinotoolkit/physicalai.git", rev = "f90b3767cfa99e243fc7b277b9faa242c87db213" }
 # PyPI's Linux torchcodec wheel is CUDA-built (needs libnvrtc), so route it per extra like torch.
 torchcodec = [
     { index = "pytorch-cpu", extra = "cpu" },

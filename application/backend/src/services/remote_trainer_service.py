@@ -185,7 +185,7 @@ class RemoteTrainerService:
             # A trainer whose launch attempt began recently is given the
             # benefit of the doubt: it may simply still be pulling its image
             # or warming up its own health endpoint, not genuinely broken.
-            status, reason_code = "starting", "Waiting for the trainer container to come online…"
+            status, reason_code = "starting", "Waiting for the trainer container to come online"
 
         return RemoteTrainerHealth(
             remote_trainer_id=remote_trainer_id,
@@ -343,6 +343,17 @@ class RemoteTrainerService:
             self._start_persistent_trainer_in_background(saved, accepted_host_key_fingerprint)
         return saved
 
+    @staticmethod
+    async def _install_ssh_prerequisites(trainer: RemoteTrainer) -> str:
+        target = persistent_trainer._ssh_target(trainer)
+        async with SshTransport(target) as transport:
+            outcome = await host_installer.install(transport)
+        if outcome == "relogin_required":
+            # New SSH logins inherit group changes; the install session cannot.
+            async with SshTransport(target) as transport:
+                return await host_installer.install(transport, check_only=True)
+        return outcome
+
     async def install_remote_trainer(self, remote_trainer_id: UUID) -> None:
         """Start a user-requested prerequisite installation; report progress via health."""
         trainer = await self.get_remote_trainer(remote_trainer_id)
@@ -352,8 +363,7 @@ class RemoteTrainerService:
 
         async def _install() -> None:
             try:
-                async with SshTransport(persistent_trainer._ssh_target(trainer)) as transport:
-                    outcome = await host_installer.install(transport)
+                outcome = await self._install_ssh_prerequisites(trainer)
                 if outcome == "ready":
                     await persistent_trainer.start(trainer)
                 else:
@@ -381,7 +391,7 @@ class RemoteTrainerService:
             await self._require_no_active_jobs(remote_trainer_id)
             await self._cancel_launch(remote_trainer_id)
             persistent_trainer.set_install_failure(remote_trainer_id, None)
-            persistent_trainer.set_install_phase(remote_trainer_id, "Installing host prerequisites…")
+            persistent_trainer.set_install_phase(remote_trainer_id, "Installing host prerequisites")
             _background_installs[remote_trainer_id] = asyncio.create_task(_install())
 
     async def reboot_installed_host(self, remote_trainer_id: UUID) -> None:  # noqa: PLR0915 - safety checks stay together.
@@ -420,9 +430,7 @@ class RemoteTrainerService:
                             after = await transport.run_command(["cat", "/proc/sys/kernel/random/boot_id"])
                             if not after.ok or after.first_line() == before.first_line():
                                 continue
-                            persistent_trainer.set_install_phase(
-                                remote_trainer_id, "Verifying installed prerequisites…"
-                            )
+                            persistent_trainer.set_install_phase(remote_trainer_id, "Verifying installed prerequisites")
                             outcome = await host_installer.install(transport)
                             break
                     except SshConnectionError:
@@ -430,6 +438,8 @@ class RemoteTrainerService:
                 else:
                     persistent_trainer.set_install_failure(remote_trainer_id, "reboot_failed")
                     return
+                if outcome == "relogin_required":
+                    outcome = await self._install_ssh_prerequisites(trainer)
                 if outcome == "ready":
                     await persistent_trainer.start(trainer)
                 else:
@@ -451,7 +461,7 @@ class RemoteTrainerService:
             ):
                 raise InvalidResourceError("remote_trainer", "No rebootable host setup state is available")
             await self._require_no_active_jobs(remote_trainer_id)
-            persistent_trainer.set_install_phase(remote_trainer_id, "Waiting for SSH host to reboot…")
+            persistent_trainer.set_install_phase(remote_trainer_id, "Waiting for SSH host to reboot")
             _background_installs[remote_trainer_id] = asyncio.create_task(_reboot())
 
     async def update_remote_trainer(
