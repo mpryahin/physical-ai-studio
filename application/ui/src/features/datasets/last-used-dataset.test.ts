@@ -1,11 +1,13 @@
 // Copyright (C) 2025-2026 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 
+import { rs } from '@rstest/core';
+
 import { clearLastUsedDatasetId, getLastUsedDatasetId, setLastUsedDatasetId } from './last-used-dataset';
 
 describe('last-used-dataset storage', () => {
     afterEach(() => {
-        vi.restoreAllMocks();
+        rs.restoreAllMocks();
         localStorage.clear();
     });
 
@@ -41,13 +43,13 @@ describe('last-used-dataset storage', () => {
     });
 
     it('does not throw when localStorage access throws', () => {
-        vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+        rs.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
             throw new Error('Storage unavailable');
         });
-        vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+        rs.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
             throw new Error('Storage unavailable');
         });
-        vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+        rs.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
             throw new Error('Storage unavailable');
         });
 

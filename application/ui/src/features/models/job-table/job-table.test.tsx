@@ -411,7 +411,7 @@ describe('TrainingRow', () => {
 
     it.each(['running', 'pending'] as const)('allows stopping a %s job', async (status) => {
         const user = userEvent.setup();
-        const onInterrupt = vi.fn();
+        const onInterrupt = rs.fn();
         renderTrainingRow({ status }, { onInterrupt });
         await user.click(screen.getByRole('button', { name: 'Stop' }));
         await user.click(screen.getByRole('button', { name: 'Stop' }));
