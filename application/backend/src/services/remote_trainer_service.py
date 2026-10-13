@@ -544,7 +544,9 @@ class RemoteTrainerService:
         if remote_trainer.connection_mode is RemoteTrainerConnectionMode.SSH:
             await self._require_no_active_jobs(remote_trainer_id)
         await self._cancel_launch(remote_trainer_id)
-        if not forget_locally:
+        if forget_locally:
+            persistent_trainer.clear_launch_state(remote_trainer_id)
+        else:
             await persistent_trainer.stop(remote_trainer)
         await remote_trainer_tunnel_manager.stop_tunnel(remote_trainer_id)
         await self.repo.delete_by_id(remote_trainer_id)

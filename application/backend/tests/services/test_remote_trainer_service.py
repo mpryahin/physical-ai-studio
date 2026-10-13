@@ -1,4 +1,5 @@
 import asyncio
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -630,8 +631,14 @@ async def test_forget_offline_ssh_trainer_keeps_remote_resources_untouched() -> 
         patch(f"{MODULE}.RemoteTrainerRepository", return_value=repository),
         patch(f"{MODULE}.persistent_trainer.stop", new_callable=AsyncMock) as stop,
         patch(f"{MODULE}.remote_trainer_tunnel_manager.stop_tunnel", new_callable=AsyncMock) as stop_tunnel,
+        patch.dict(persistent_trainer._launch_started_at, {trainer.id: datetime.now(UTC)}),
     ):
+        persistent_trainer.set_install_phase(trainer.id, "Starting trainer")
+        persistent_trainer.set_install_failure(trainer.id, "host_unreachable")
         await RemoteTrainerService(session).delete_remote_trainer(trainer.id, forget_locally=True)
+        assert persistent_trainer.get_launch_phase(trainer.id) is None
+        assert persistent_trainer.get_launch_failure(trainer.id) is None
+        assert not persistent_trainer.is_within_startup_grace_period(trainer.id)
 
     stop.assert_not_awaited()
     stop_tunnel.assert_awaited_once_with(trainer.id)

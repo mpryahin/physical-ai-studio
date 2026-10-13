@@ -428,6 +428,21 @@ describe('TrainingRow', () => {
         expect(screen.getByText(/remote work may continue/i)).toBeInTheDocument();
     });
 
+    it('warns that a pending remote reattachment may already be running', async () => {
+        const user = userEvent.setup();
+        renderTrainingRow({
+            status: 'pending',
+            payload: getMockedTrainJobPayload({
+                training_target: 'remote',
+                remote_trainer_id: remoteTrainer.id,
+                remote_job_id: '86cf47a8-7b18-4236-98b4-2980eafcfd2b',
+            }),
+        });
+        await user.click(screen.getByRole('button', { name: 'Stop' }));
+        expect(screen.getByText(/remote work may continue/i)).toBeInTheDocument();
+        expect(screen.queryByText('This job will not start.')).not.toBeInTheDocument();
+    });
+
     it('renders no Stop button when status is not running', () => {
         renderTrainingRow({ status: 'completed', end_time: '2026-07-14T10:30:00Z' });
         expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument();

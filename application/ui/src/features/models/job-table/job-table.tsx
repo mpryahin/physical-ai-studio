@@ -228,7 +228,8 @@ export const TrainingRow = ({
                             Stop training for {trainJob.payload.model_name}?
                             <br />
                             <br />
-                            {trainJob.status === 'pending'
+                            {trainJob.status === 'pending' &&
+                            (trainJob.payload.training_target !== 'remote' || !trainJob.payload.remote_job_id)
                                 ? 'This job will not start.'
                                 : trainJob.payload.training_target === 'remote'
                                   ? 'Studio will request cancellation; unreachable remote work may continue.'
