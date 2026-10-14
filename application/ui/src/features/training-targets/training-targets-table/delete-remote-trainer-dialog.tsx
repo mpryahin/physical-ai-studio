@@ -23,7 +23,7 @@ export const DeleteRemoteTrainerDialog = ({ remoteTrainer, onDeleted, onCancel }
     });
 
     const error = deleteMutation.isError
-        ? (getApiErrorMessage(deleteMutation.error) ?? "'The remote trainer could not be deleted. Try again.'")
+        ? (getApiErrorMessage(deleteMutation.error) ?? 'The remote trainer could not be deleted. Try again.')
         : undefined;
 
     const remove = async () => {
@@ -44,7 +44,7 @@ export const DeleteRemoteTrainerDialog = ({ remoteTrainer, onDeleted, onCancel }
         <AlertDialog
             title='Delete remote trainer'
             variant='warning'
-            primaryActionLabel={forgetLocally ? 'Forget locally' : 'Delete'}
+            primaryActionLabel={forgetLocally ? 'Force delete' : 'Delete'}
             cancelLabel='Close'
             onCancel={onCancel}
             onPrimaryAction={remove}
@@ -55,13 +55,13 @@ export const DeleteRemoteTrainerDialog = ({ remoteTrainer, onDeleted, onCancel }
                     Delete {remoteTrainer.name}? Submitted remote jobs retain their pinned endpoint URL and are not
                     changed.
                 </Text>
-                {remoteTrainer.connection_mode === 'ssh' && (
+                {error && <Text UNSAFE_className={classes.errorMessage}>{error}</Text>}
+                {remoteTrainer.connection_mode === 'ssh' && error && (
                     <Checkbox isSelected={forgetLocally} onChange={setForgetLocally}>
-                        Forget locally if the SSH host is gone. This skips cleanup of its container, volume, and remote
-                        jobs. Stop pending or running jobs first.
+                        Force delete locally without cleaning up the remote container and volume. Stop pending or
+                        running jobs first.
                     </Checkbox>
                 )}
-                {error && <Text UNSAFE_className={classes.errorMessage}>{error}</Text>}
             </Flex>
         </AlertDialog>
     );
