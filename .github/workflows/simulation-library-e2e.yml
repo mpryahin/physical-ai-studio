@@ -20,7 +20,7 @@ jobs:
   train-and-rollout:
     name: Simulation ${{ matrix.policy }} / ${{ matrix.scene }}
     runs-on: [self-hosted, Linux, X64, gpu]
-    timeout-minutes: 120
+    timeout-minutes: 2880
     permissions:
       contents: read
     strategy:
@@ -38,6 +38,7 @@ jobs:
       MUJOCO_GL: osmesa
       PYOPENGL_PLATFORM: osmesa
       SIM_E2E_ACCELERATOR: auto
+      SIM_E2E_ROLLOUTS: 5
       SIM_E2E_RECORD_VIDEO: ${{ inputs.record_video || false }}
       SIM_E2E_POLICY: ${{ matrix.policy }}
       SIM_E2E_SCENE: ${{ matrix.scene }}
@@ -177,3 +178,35 @@ jobs:
             ${{ runner.temp }}/simulation-owner.log
           if-no-files-found: ignore
           retention-days: 30
+
+  report:
+    name: Weekly policy report
+    if: always()
+    needs: train-and-rollout
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download policy results
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        continue-on-error: true
+        with:
+          pattern: sim-*-conveyor_sort
+          path: results
+      - name: Summarize training and inference
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from pathlib import Path
+
+          print('## Conveyor policy E2E (train once, then five inference trials per policy)')
+          print('| Policy | Train steps | Train time (h) | Final train loss | Inference scores | Mean score |')
+          print('| --- | ---: | ---: | ---: | --- | ---: |')
+          for policy in ('act', 'molmoact2', 'pi05', 'rldx1', 'smolvla', 'xr0'):
+              path = Path('results') / f'sim-{policy}-conveyor_sort' / 'result.json'
+              if not path.is_file():
+                  print(f'| {policy} | — | — | — | No result (see job logs) | — |')
+                  continue
+              result = json.loads(path.read_text())
+              loss = '—' if result['train_loss'] is None else f"{result['train_loss']:.4f}"
+              scores = ', '.join(f"{rollout['score']:.1%}" for rollout in result['rollouts'])
+              print(f"| {policy} | {result['training_steps']} | {result['training_seconds'] / 3600:.2f} | {loss} | {scores} | {result['score']:.1%} |")
+          PY

@@ -216,64 +216,82 @@ def test_train_export_and_run_in_simulation(scene: str, tmp_path: Path) -> None:
         enable_checkpointing=True,
         enable_progress_bar=False,
     )
+    training_start = time.monotonic()
     trainer.fit(policy, datamodule=data)
+    training_seconds = time.monotonic() - training_start
+    train_loss = next(
+        (trainer.callback_metrics[key] for key in ("train/loss", "train/loss_step", "train/loss_epoch")
+         if key in trainer.callback_metrics),
+        None,
+    )
     assert trainer.global_step > 0
     assert (output_dir / "checkpoints" / "last.ckpt").is_file()
     export_dir = output_dir / "export"
     policy.eval().export(export_dir, backend="openvino")
     assert (export_dir / "manifest.json").is_file()
 
-    # Training can take minutes while an idle conveyor continues to run. Reset
-    # immediately before inference so those episodes cannot count as policy work.
-    _reset(url)
-    # The HTTP endpoint queues the reset for the simulation control thread.
-    time.sleep(0.5)
-    before = _health(url)
-    model = InferenceModel(export_dir, backend="openvino", device="CPU")
-    monitor = _RolloutMonitor(url, before)
-    runtime = RobotRuntime(
-        robot=SharedRobot.attach(name=owner),
-        action_source=PolicySource(model=model, execution=SyncExecution(request_threshold=0.5)),
-        cameras={key: IPCamera(url=f"{url.rstrip('/')}/cameras/{camera_map.get(key, key)}/mjpeg") for key in cameras},
-        fps=float(metadata["fps"]),
-        callbacks=[monitor],
-    )
     record_video = os.environ.get("SIM_E2E_RECORD_VIDEO", "false").lower() in {"1", "true"}
     recorder = (
         _record_video(output_dir, url, cameras, camera_map, int(metadata["fps"]), policy_name, scene)
         if record_video
         else nullcontext(None)
     )
-    stop = threading.Event()
-    timer = threading.Timer(float(os.environ.get("SIM_E2E_ROLLOUT_SECONDS", "120")), stop.set)
-    try:
-        with recorder as video_path:
-            with runtime:
-                timer.start()
-                try:
-                    steps = runtime.run(stop_event=stop)
-                finally:
-                    timer.cancel()
-            monitor.observe(_health(url))
-        assert steps > 0
-        monitor.check_actions()
-        score = _score(scene, monitor.episodes)
-        result = {
-            "policy": policy_name,
-            "scene": scene,
-            "score": score,
-            "steps": steps,
-            "episodes": monitor.episodes,
-            "actions_sent": monitor.actions_sent,
-            "max_joint_change": monitor.max_joint_change,
-        }
-        if video_path is not None:
-            result["video"] = video_path.name
-        (output_dir / "result.json").write_text(json.dumps(result))
-        assert score >= float(os.environ.get("SIM_E2E_MIN_SUCCESS", "0"))
-    finally:
-        timer.cancel()
-        runtime.disconnect()
+    rollout_count = int(os.environ.get("SIM_E2E_ROLLOUTS", "1"))
+    if rollout_count < 1:
+        raise ValueError("SIM_E2E_ROLLOUTS must be positive")
+    rollouts = []
+    with recorder as video_path:
+        for _ in range(rollout_count):
+            # Reset between trials so idle training and previous rollouts cannot affect the score.
+            _reset(url)
+            time.sleep(0.5)  # Reset is queued on the simulation control thread.
+            monitor = _RolloutMonitor(url, _health(url))
+            model = InferenceModel(export_dir, backend="openvino", device="CPU")
+            runtime = RobotRuntime(
+                robot=SharedRobot.attach(name=owner),
+                action_source=PolicySource(model=model, execution=SyncExecution(request_threshold=0.5)),
+                cameras={
+                    key: IPCamera(url=f"{url.rstrip('/')}/cameras/{camera_map.get(key, key)}/mjpeg") for key in cameras
+                },
+                fps=float(metadata["fps"]),
+                callbacks=[monitor],
+            )
+            stop = threading.Event()
+            timer = threading.Timer(float(os.environ.get("SIM_E2E_ROLLOUT_SECONDS", "120")), stop.set)
+            try:
+                with runtime:
+                    timer.start()
+                    try:
+                        steps = runtime.run(stop_event=stop)
+                    finally:
+                        timer.cancel()
+                monitor.observe(_health(url))
+                assert steps > 0
+                monitor.check_actions()
+                rollouts.append({
+                    "score": _score(scene, monitor.episodes),
+                    "steps": steps,
+                    "episodes": monitor.episodes,
+                    "actions_sent": monitor.actions_sent,
+                    "max_joint_change": monitor.max_joint_change,
+                })
+            finally:
+                timer.cancel()
+                runtime.disconnect()
+    score = sum(rollout["score"] for rollout in rollouts) / len(rollouts)
+    result = {
+        "policy": policy_name,
+        "scene": scene,
+        "score": score,
+        "rollouts": rollouts,
+        "training_steps": trainer.global_step,
+        "training_seconds": training_seconds,
+        "train_loss": float(train_loss) if train_loss is not None else None,
+    }
+    if video_path is not None:
+        result["video"] = video_path.name
+    (output_dir / "result.json").write_text(json.dumps(result))
+    assert score >= float(os.environ.get("SIM_E2E_MIN_SUCCESS", "0"))
 
 
 @pytest.mark.parametrize("record_video", [False, True])
@@ -308,7 +326,8 @@ def test_library_orchestration_with_mock_owner(
         (path / "manifest.json").write_text("{}")
 
     policy.export.side_effect = export
-    trainer = MagicMock(global_step=2)
+    loss_key = "train/loss_step" if policy_name == "rldx1" else "train/loss"
+    trainer = MagicMock(global_step=2, callback_metrics={loss_key: 0.25})
 
     def save_checkpoint(*args: object, **kwargs: object) -> None:
         checkpoint = tmp_path / "results/checkpoints/last.ckpt"
@@ -335,7 +354,8 @@ def test_library_orchestration_with_mock_owner(
     monkeypatch.setattr(module, "Trainer", make_trainer)
     make_data = MagicMock(return_value=object())
     monkeypatch.setattr(module, "LeRobotDataModule", make_data)
-    monkeypatch.setattr(module, "InferenceModel", lambda *args, **kwargs: object())
+    make_model = MagicMock(side_effect=lambda *args, **kwargs: object())
+    monkeypatch.setattr(module, "InferenceModel", make_model)
     monkeypatch.setattr(module, "SharedRobot", SimpleNamespace(attach=lambda **kwargs: object()))
     monkeypatch.setattr(module, "IPCamera", lambda **kwargs: object())
     monkeypatch.setattr(module, "PolicySource", lambda **kwargs: object())
@@ -360,6 +380,11 @@ def test_library_orchestration_with_mock_owner(
         {"episode": {"episode_count": 0}},
         {"episode": {"episode_count": 1, "last_episode": {"correct": 7, "wrong": 2, "missed": 1}}},
     ]
+    if scene == "conveyor_sort":
+        health += [
+            {"episode": {"episode_count": 0}},
+            {"episode": {"episode_count": 1, "last_episode": {"correct": 3, "wrong": 2, "missed": 5}}},
+        ]
     monkeypatch.setattr(module, "_health", lambda url: health.pop(0))
     reset = MagicMock()
     monkeypatch.setattr(module, "_reset", reset)
@@ -371,6 +396,7 @@ def test_library_orchestration_with_mock_owner(
     monkeypatch.setenv("SIM_E2E_OUTPUT_DIR", str(tmp_path / "results"))
     monkeypatch.setenv("SIM_E2E_RECORD_VIDEO", "true" if record_video else "false")
     monkeypatch.setenv("SIM_E2E_ROLLOUT_SECONDS", "0.01")
+    monkeypatch.setenv("SIM_E2E_ROLLOUTS", "2" if scene == "conveyor_sort" else "1")
     monkeypatch.delenv("SIM_E2E_TRAIN_STEPS", raising=False)
     test_train_export_and_run_in_simulation(scene, tmp_path)
 
@@ -378,16 +404,21 @@ def test_library_orchestration_with_mock_owner(
     assert make_data.call_args.kwargs["train_batch_size"] == 2
     assert make_trainer.call_args.kwargs["max_steps"] == 2
     assert make_trainer.call_args.kwargs["callbacks"][0].save_last
-    reset.assert_called_once()
-    runtime.run.assert_called_once()
-    runtime.disconnect.assert_called_once()
+    assert reset.call_count == (2 if scene == "conveyor_sort" else 1)
+    assert runtime.run.call_count == reset.call_count
+    assert runtime.disconnect.call_count == reset.call_count
+    assert make_model.call_count == reset.call_count
     get_policy.assert_called_once_with(policy_name, source="physicalai")
-    expected = 0.7 if scene == "conveyor_sort" else 1.0
+    expected = 0.5 if scene == "conveyor_sort" else 1.0
     result = json.loads((tmp_path / "results/result.json").read_text())
     assert result["score"] == pytest.approx(expected)
-    assert len(result["episodes"]) == 1
-    assert result["actions_sent"] == 2
-    assert result["max_joint_change"] == pytest.approx(2.0)
+    assert [r["score"] for r in result["rollouts"]] == ([0.7, 0.3] if scene == "conveyor_sort" else [1.0])
+    assert all(len(r["episodes"]) == 1 for r in result["rollouts"])
+    assert all(r["actions_sent"] == 2 for r in result["rollouts"])
+    assert all(r["max_joint_change"] == pytest.approx(2.0) for r in result["rollouts"])
+    assert result["training_steps"] == 2
+    assert result["training_seconds"] >= 0
+    assert result["train_loss"] == pytest.approx(0.25)
     if record_video:
         assert result["video"] == f"inference-{policy_name}-{scene}.mp4"
         command = popen.call_args.args[0]
