@@ -1,0 +1,287 @@
+name: Simulation Studio E2E
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number
+        required: true
+      policy:
+        description: First-party policy
+        required: true
+        type: choice
+        options: [act, molmoact2, pi05, rldx1, smolvla, xr0]
+      scenario:
+        description: Simulation scene
+        required: true
+        type: choice
+        options: [conveyor_sort, single_pick_place]
+      mode:
+        description: Training plus inference or inference only
+        required: true
+        type: choice
+        options: [inference, full]
+
+permissions: {}
+
+concurrency:
+  group: simulation-studio-${{ github.event.issue.number || inputs.pr || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  authorize:
+    if: github.event_name == 'workflow_dispatch' || (github.event.issue.pull_request && startsWith(github.event.comment.body, '/e2e studio '))
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    outputs:
+      pr: ${{ steps.request.outputs.pr }}
+      sha: ${{ steps.request.outputs.sha }}
+      policy: ${{ steps.request.outputs.policy }}
+      scenario: ${{ steps.request.outputs.scenario }}
+      mode: ${{ steps.request.outputs.mode }}
+      weekly_run: ${{ steps.request.outputs.weekly_run }}
+    steps:
+      - name: Validate maintainer request and pin PR and weekly run
+        id: request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMENT: ${{ github.event.comment.body }}
+          INPUT_PR: ${{ inputs.pr }}
+          INPUT_POLICY: ${{ inputs.policy }}
+          INPUT_SCENARIO: ${{ inputs.scenario }}
+          INPUT_MODE: ${{ inputs.mode }}
+          AUTHOR: ${{ github.actor }}
+          RUNNER_READY: ${{ vars.SIM_E2E_EPHEMERAL_RUNNER_READY }}
+        run: |
+          set -euo pipefail
+          permission=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$AUTHOR/permission" --jq '.permission')
+          [[ "$permission" =~ ^(admin|maintain|write)$ ]] || { echo 'Only maintainers may authorize expensive PR runs' >&2; exit 1; }
+          if [[ "$GITHUB_EVENT_NAME" == issue_comment ]]; then
+            [[ "$COMMENT" =~ ^/e2e\ studio\ policy=(act|molmoact2|pi05|rldx1|smolvla|xr0)\ scenario=(conveyor_sort|single_pick_place)\ mode=(inference|full)$ ]] || {
+              echo 'Expected: /e2e studio policy=act scenario=conveyor_sort mode=inference|full' >&2; exit 1;
+            }
+            policy=${BASH_REMATCH[1]}; scenario=${BASH_REMATCH[2]}; mode=${BASH_REMATCH[3]}
+            pr=${{ github.event.issue.number || 0 }}
+          else
+            policy=$INPUT_POLICY; scenario=$INPUT_SCENARIO; mode=$INPUT_MODE; pr=$INPUT_PR
+            [[ "$policy" =~ ^(act|molmoact2|pi05|rldx1|smolvla|xr0)$ && "$scenario" =~ ^(conveyor_sort|single_pick_place)$ && "$mode" =~ ^(inference|full)$ ]] || exit 1
+          fi
+          [[ "$pr" =~ ^[0-9]+$ ]] || exit 1
+          [[ "$RUNNER_READY" == true ]] || { echo 'TEMP_EPHEMERAL_SIM runner is not provisioned. Set SIM_E2E_EPHEMERAL_RUNNER_READY when ready.' >&2; exit 1; }
+          details=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr")
+          [[ $(jq -r '.state' <<< "$details") == open ]] || { echo 'PR is not open' >&2; exit 1; }
+          sha=$(jq -r '.head.sha' <<< "$details")
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          weekly_run=none
+          if [[ "$mode" == inference ]]; then
+            artifact="sim-$policy-$scenario"
+            for run in $(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/simulation-library-e2e.yml/runs?status=completed&per_page=30" --jq '.workflow_runs[].id'); do
+              passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs?per_page=100" |
+                jq -r --arg name "Simulation $policy / $scenario" '.jobs[] | select(.name == $name and .conclusion == "success") | .id')
+              [[ -n "$passed" ]] || continue
+              found=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/artifacts" |
+                jq -r --arg name "$artifact" '.artifacts[] | select(.name == $name and .expired == false) | .id')
+              if [[ -n "$found" ]]; then weekly_run=$run; break; fi
+            done
+            [[ "$weekly_run" != none ]] || { echo "No successful weekly artifact: $artifact" >&2; exit 1; }
+          fi
+          printf 'pr=%s\nsha=%s\npolicy=%s\nscenario=%s\nmode=%s\nweekly_run=%s\n' \
+            "$pr" "$sha" "$policy" "$scenario" "$mode" "$weekly_run" >> "$GITHUB_OUTPUT"
+
+  simulate:
+    needs: authorize
+    runs-on: [self-hosted, Linux, X64, TEMP_EPHEMERAL_SIM]
+    timeout-minutes: 4320
+    permissions:
+      actions: read
+      contents: read
+    env:
+      MUJOCO_GL: osmesa
+      PYOPENGL_PLATFORM: osmesa
+      SIM_E2E_SCENE: ${{ needs.authorize.outputs.scenario }}
+      SIM_E2E_POLICY: ${{ needs.authorize.outputs.policy }}
+      SIM_E2E_PR_SHA: ${{ needs.authorize.outputs.sha }}
+      SIM_E2E_MODE: ${{ needs.authorize.outputs.mode }}
+      SIM_E2E_OWNER: sim-pr-${{ needs.authorize.outputs.pr }}
+      SIM_E2E_HTTP_URL: http://127.0.0.1:8080
+      SIM_E2E_STUDIO_URL: http://127.0.0.1:7860
+      SIM_E2E_CAMERA_MAP: '{"gripper":"wrist"}'
+      DATASET_REPO: ${{ needs.authorize.outputs.scenario == 'conveyor_sort' && (vars.SIM_E2E_HF_REPO_CONVEYOR || 'Albertvh97/conveyor-sort-sim-demos') || (vars.SIM_E2E_HF_REPO_PICK_PLACE || 'TEMP_HF_ORG/single-pick-place') }}
+      DATASET_REV: ${{ needs.authorize.outputs.scenario == 'conveyor_sort' && (vars.SIM_E2E_HF_REV_CONVEYOR || '6a949360761fee17089fbaaf8bc53f59715cb575') || (vars.SIM_E2E_HF_REV_PICK_PLACE || 'TEMP_REVISION') }}
+    steps:
+      - name: Harden isolated runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          disable-sudo: false
+          disable-telemetry: true
+          egress-policy: block
+          allowed-endpoints: >
+            api.github.com:443
+            cas-server.xethub.hf.co:443
+            download.pytorch.org:443
+            download-r2.pytorch.org:443
+            files.pythonhosted.org:443
+            github.com:443
+            huggingface.co:443
+            pypi.org:443
+            release-assets.githubusercontent.com:443
+            releases.astral.sh:443
+            transfer.xethub.hf.co:443
+
+      - name: Checkout pinned PR commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/pull/${{ needs.authorize.outputs.pr }}/head
+          persist-credentials: false
+
+      - name: Isolate data, database, and output paths
+        run: |
+          {
+            echo "STORAGE_DIR=$RUNNER_TEMP/studio-sim"
+            echo "HF_HOME=$RUNNER_TEMP/hf-sim"
+            echo "SIM_E2E_OUTPUT_DIR=$RUNNER_TEMP/studio-results"
+          } >> "$GITHUB_ENV"
+
+      - name: Check PR revision and isolated runner
+        env:
+          EXPECTED_SHA: ${{ needs.authorize.outputs.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA" || { echo 'PR head changed since approval' >&2; exit 1; }
+          [[ "$DATASET_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && "$DATASET_REV" =~ ^[0-9a-f]{40}$ ]] || {
+            echo 'Published dataset ID and immutable revision are required' >&2; exit 1;
+          }
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: application/backend/.python-version
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.10.4"
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libosmesa6 libosmesa6-dev
+          cd application/backend
+          uv sync --frozen --extra cpu --extra tests --extra sim-e2e
+
+      - name: Download pinned scenario data
+        working-directory: application/backend
+        run: |
+          uv run --no-sync hf download "$DATASET_REPO" --repo-type dataset --revision "$DATASET_REV" \
+            --local-dir "$RUNNER_TEMP/scenario-dataset" --include 'simulation.json' --include 'meta/*' --include 'data/*' --include 'videos/*'
+          jq -e --arg scene "$SIM_E2E_SCENE" '.scene == $scene' "$RUNNER_TEMP/scenario-dataset/simulation.json" > /dev/null
+          test -f "$RUNNER_TEMP/scenario-dataset/meta/info.json"
+          python - <<'PY' >> "$GITHUB_ENV"
+          import json
+          import os
+          from pathlib import Path
+          info = json.loads((Path(os.environ['RUNNER_TEMP']) / 'scenario-dataset/meta/info.json').read_text())
+          cameras = sorted(key.removeprefix('observation.images.') for key in info['features'] if key.startswith('observation.images.'))
+          if not cameras:
+              raise ValueError('Simulation dataset has no cameras')
+          print('SIM_E2E_CAMERAS=' + ','.join(cameras))
+          PY
+          if [[ "$SIM_E2E_MODE" == full ]]; then
+            cd "$RUNNER_TEMP/scenario-dataset"
+            python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile, ZIP_STORED
+          import os
+          with ZipFile(Path(os.environ['RUNNER_TEMP']) / 'scenario-dataset.zip', 'w', ZIP_STORED) as z:
+              for base in ('meta', 'data', 'videos'):
+                  for p in Path(base).rglob('*'):
+                      if p.is_file():
+                          z.write(p)
+          PY
+          fi
+          echo "SIM_E2E_DATASET_ARCHIVE=$RUNNER_TEMP/scenario-dataset.zip" >> "$GITHUB_ENV"
+
+      - name: Download latest successful weekly export
+        if: needs.authorize.outputs.mode == 'inference'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: sim-${{ needs.authorize.outputs.policy }}-${{ needs.authorize.outputs.scenario }}
+          run-id: ${{ needs.authorize.outputs.weekly_run }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/weekly-export
+
+      - name: Check artifact provenance
+        if: needs.authorize.outputs.mode == 'inference'
+        run: |
+          cd "$RUNNER_TEMP/weekly-export"
+          sha256sum --check SHA256SUMS
+          jq -e --arg policy "$SIM_E2E_POLICY" --arg scene "$SIM_E2E_SCENE" --arg dataset_rev "$DATASET_REV" \
+            '.policy == $policy and .scenario == $scene and .dataset_revision == $dataset_rev and (.source_sha | test("^[0-9a-f]{40}$"))' provenance.json > /dev/null
+          test -f export/manifest.json
+          {
+            echo "SIM_E2E_EXPORT_DIR=$RUNNER_TEMP/weekly-export/export"
+            echo "SIM_E2E_WEEKLY_SHA=$(jq -r '.source_sha' provenance.json)"
+            echo "SIM_E2E_WEEKLY_RUN=${{ needs.authorize.outputs.weekly_run }}"
+          } >> "$GITHUB_ENV"
+
+      - name: Start simulation and backend
+        working-directory: application/backend
+        run: |
+          uv run --no-sync physicalai-mujoco prefetch
+          uv run --no-sync physicalai-mujoco start --scene "$SIM_E2E_SCENE" \
+            --name "$SIM_E2E_OWNER" --http-port 8080 --no-gui > "$RUNNER_TEMP/sim.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/sim.pid"
+          uv run --no-sync physicalai-studio serve --host 127.0.0.1 --port 7860 \
+            > "$RUNNER_TEMP/studio.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/studio.pid"
+          for ((attempt=1; attempt<=120; attempt++)); do
+            if curl --silent --fail "$SIM_E2E_HTTP_URL/health" > /dev/null && \
+               curl --silent --fail "$SIM_E2E_STUDIO_URL/api/health" > /dev/null; then exit 0; fi
+            sleep 1
+          done
+          echo 'Studio or MuJoCo owner failed to become healthy' >&2
+          exit 1
+
+      - name: Match recorded conveyor belt speed
+        if: needs.authorize.outputs.scenario == 'conveyor_sort'
+        run: |
+          speed=$(jq -er '.belt_speed | select(type == "number" and . > 0 and . <= 0.1)' "$RUNNER_TEMP/scenario-dataset/simulation.json")
+          curl --fail --silent --show-error -X POST "$SIM_E2E_HTTP_URL/conveyor/belt-speed" \
+            -H 'content-type: application/json' -d "{\"speed\":$speed}"
+          for ((attempt=1; attempt<=20; attempt++)); do
+            if curl --silent --fail "$SIM_E2E_HTTP_URL/health" | jq -e --argjson speed "$speed" '.episode.belt_speed == $speed' > /dev/null; then exit 0; fi
+            sleep 0.2
+          done
+          echo 'Conveyor belt did not reach the recorded speed' >&2
+          exit 1
+
+      - name: Exercise Studio APIs and live policy inference
+        working-directory: application/backend
+        run: |
+          mkdir -p "$SIM_E2E_OUTPUT_DIR"
+          uv run --no-sync pytest tests/integration/test_simulation_studio_e2e.py \
+            -k "$SIM_E2E_SCENE" -v --junitxml="$SIM_E2E_OUTPUT_DIR/junit.xml"
+
+      - name: Stop services
+        if: always()
+        run: |
+          curl --silent --max-time 3 -X POST "$SIM_E2E_HTTP_URL/shutdown" || true
+          for service in sim studio; do
+            if test -f "$RUNNER_TEMP/$service.pid"; then kill "$(< "$RUNNER_TEMP/$service.pid")" 2>/dev/null || true; fi
+          done
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: studio-sim-${{ needs.authorize.outputs.pr }}-${{ needs.authorize.outputs.policy }}-${{ needs.authorize.outputs.scenario }}
+          path: |
+            ${{ runner.temp }}/studio-results/
+            ${{ runner.temp }}/sim.log
+            ${{ runner.temp }}/studio.log
+          if-no-files-found: ignore
+          retention-days: 30

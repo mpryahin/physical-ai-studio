@@ -156,7 +156,7 @@ jobs:
       - name: Run e2e integration tests
         working-directory: application/backend
         run: |
-          uv run pytest tests/integration -m slow -v
+          uv run pytest tests/integration -m slow -v --ignore=tests/integration/test_simulation_studio_e2e.py
 
   required-check:
     name: Required Check backend

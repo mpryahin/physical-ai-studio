@@ -79,6 +79,7 @@ xpu = [
     "torchvision>=0.26,<0.27",
 ]
 
+sim-e2e = ["physicalai-mujoco-plugin"]
 tests = [
     "pytest",
     "pytest-asyncio",
@@ -124,6 +125,7 @@ explicit = false
 [tool.uv.sources]
 physicalai-train = { path = "../../library", editable = true }
 physicalai = { git = "https://github.com/openvinotoolkit/physicalai.git", rev = "91338224c67f0d17f166eb062e3ac9a6762db784" }
+physicalai-mujoco-plugin = { git = "https://github.com/openvinotoolkit/physicalai.git", rev = "91338224c67f0d17f166eb062e3ac9a6762db784", subdirectory = "packages/physicalai-mujoco-plugin" }
 # Keep torchao on PyPI for all extras.
 # The XPU index publishes `torchao` local-version wheels (e.g. `+xpu`) that can
 # be selected via unsafe-best-match even for non-XPU installs (like `--extra cuda`),
