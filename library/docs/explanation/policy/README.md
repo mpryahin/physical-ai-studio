@@ -2,9 +2,9 @@
 
 Policies are Lightning modules that wrap PyTorch models for training and inference.
 
-## Native Framework Plugins (Proposal)
+## Native Framework Engines
 
-The [Engine and Native Frameworks design](engine-and-frameworks.md) proposes plugins that run a framework's own trainer, support repo-specific model plugins and capability enablements, and package the result for Runtime. It is a proposal, not an implemented API.
+[Engine and Native Frameworks](engine-and-frameworks.md) describes the framework-native plugin architecture and the current LeRobot proof of concept, including its API, CLI, worker environments, Runtime adapter, validation, and follow-up work.
 
 ## Structure
 
