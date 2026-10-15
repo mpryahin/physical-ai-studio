@@ -55,9 +55,21 @@ export const DeleteRemoteTrainerDialog = ({ remoteTrainer, onDeleted, onCancel }
                     Delete {remoteTrainer.name}? Submitted remote jobs retain their pinned endpoint URL and are not
                     changed.
                 </Text>
+                {deleteMutation.isPending && (
+                    <Text>
+                        Deleting trainer…{' '}
+                        {remoteTrainer.connection_mode === 'ssh' &&
+                            !forgetLocally &&
+                            'SSH cleanup may take a while if the host is unreachable.'}
+                    </Text>
+                )}
                 {error && <Text UNSAFE_className={classes.errorMessage}>{error}</Text>}
-                {remoteTrainer.connection_mode === 'ssh' && error && (
-                    <Checkbox isSelected={forgetLocally} onChange={setForgetLocally}>
+                {remoteTrainer.connection_mode === 'ssh' && (
+                    <Checkbox
+                        isSelected={forgetLocally}
+                        onChange={setForgetLocally}
+                        isDisabled={deleteMutation.isPending}
+                    >
                         Force delete locally without cleaning up the remote container and volume. Stop pending or
                         running jobs first.
                     </Checkbox>
