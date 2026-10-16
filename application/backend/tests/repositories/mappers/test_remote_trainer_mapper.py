@@ -43,16 +43,27 @@ def test_round_trip_preserves_connection(connection) -> None:
     assert restored.connection_mode is connection.connection_mode
 
 
-def test_from_schema_reads_json_connection() -> None:
+@pytest.mark.parametrize(
+    ("port_fields", "expected_url"),
+    [
+        ({}, None),
+        ({"ssh_local_port": None}, None),
+        ({"ssh_local_port": 8001}, "http://127.0.0.1:8001/"),
+        ({"ssh_local_port": 9001}, "http://127.0.0.1:9001/"),
+    ],
+    ids=["omitted-local-port", "unassigned-local-port", "explicit-local-port", "allocated-local-port"],
+)
+def test_from_schema_reads_json_connection(port_fields: dict[str, int | None], expected_url: str | None) -> None:
     db_row = RemoteTrainerDB(
         id=str(uuid4()),
         name="trainer",
         connection_mode="ssh",
-        connection={"connection_mode": "ssh", "ssh_host_alias": "training-box"},
+        connection={"connection_mode": "ssh", "ssh_host_alias": "training-box", **port_fields},
     )
 
     trainer = RemoteTrainerMapper.from_schema(db_row)
 
     assert isinstance(trainer.connection, SshConnection)
     assert trainer.connection.ssh_host_alias == "training-box"
-    assert str(trainer.url) == "http://127.0.0.1:8001/"
+    assert trainer.connection.ssh_local_port == port_fields.get("ssh_local_port")
+    assert (str(trainer.url) if trainer.url is not None else None) == expected_url
