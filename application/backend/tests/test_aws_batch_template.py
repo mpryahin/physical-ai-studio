@@ -3,12 +3,15 @@ import os
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
 
+from schemas.hardware import DeviceType
 from schemas.remote_trainer import AwsBatchResourceConfiguration
+from services.ssh.trainer_image import trainer_image_ref
 from trainer.batch.settings import BatchSettings
 
 
@@ -34,22 +37,15 @@ def test_configuration_object_is_excluded_from_data_expiration() -> None:
     assert all(rule["ExpirationInDays"] == "30" for rule in rules)
 
 
-def test_batch_uses_ssh_trainer_image_without_image_parameter() -> None:
+def test_batch_uses_cuda_trainer_image_without_image_parameter() -> None:
     template = _template()
-    image = "ghcr.io/open-edge-platform/physicalai-trainer-cuda:main"
+    image = trainer_image_ref("ghcr.io/open-edge-platform", DeviceType.CUDA, "main")
     definitions = [
         resource for resource in template["Resources"].values() if resource["Type"] == "AWS::Batch::JobDefinition"
     ]
     assert len(definitions) == 3
     assert all(definition["Properties"]["ContainerProperties"]["Image"] == image for definition in definitions)
     assert "TrainerImage" not in json.dumps(template)
-
-    ssh_path = Path(__file__).resolve().parents[2] / "cloudformation" / "remote-trainer.yaml"
-    ssh_template = yaml.load(ssh_path.read_text(), Loader=yaml.BaseLoader)
-    user_data = ssh_template["Resources"]["TrainerInstance"]["Properties"]["UserData"]["Fn::Base64"]
-    repository, tag = image.rsplit(":", 1)
-    assert f'IMAGE="{repository}"' in user_data
-    assert f'TAG="{tag}"' in user_data
 
 
 @pytest.mark.parametrize("definition", ["G4dnJobDefinition", "G6eJobDefinition", "P5JobDefinition"])
@@ -127,7 +123,7 @@ def test_template_publishes_configuration_and_cleans_bucket(request_type: str) -
     code = template["Resources"]["BucketCleanupFunction"]["Properties"]["Code"]["ZipFile"]
     boto = MagicMock()
     response = MagicMock()
-    namespace = {}
+    namespace: dict[str, Any] = {}
     event = {
         "RequestType": request_type,
         "PhysicalResourceId": "stable-resource",

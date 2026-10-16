@@ -12,11 +12,9 @@ A new Cloud Providers tab will manage integrations with cloud providers.
 
 ![Cloud provider targets](img/training-targets.png)
 
-
 A new Add cloud target form will create a stack, asking to fill in required configuration parameters, based on the cloud provider configuration json schema.
 
 ![Create a clout provider target](img/add-cloud-target.png)
-
 
 ## Physical AI Studio Trainer
 
