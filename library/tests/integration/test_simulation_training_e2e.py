@@ -6,8 +6,8 @@
 Start the physicalai-mujoco simulation separately. Point SIM_E2E_DATASET_DIR
 at a LeRobot dataset recorded in that scene, not a synthetic fixture. This
 suite deliberately fails if its inputs are absent when explicitly selected.
-Each policy uses its constructor defaults. The shared two-step budget is a
-smoke test; set SIM_E2E_TRAIN_STEPS for a longer training run.
+The default budget trains for three full epochs. Set SIM_E2E_TRAIN_STEPS
+for a shorter, step-limited smoke run.
 """
 
 from __future__ import annotations
@@ -203,16 +203,20 @@ def test_train_export_and_run_in_simulation(scene: str, tmp_path: Path) -> None:
     output_dir = Path(os.environ.get("SIM_E2E_OUTPUT_DIR", str(tmp_path)))
     output_dir.mkdir(parents=True, exist_ok=True)
     data = LeRobotDataModule(repo_id="sim-e2e", root=dataset_dir, train_batch_size=2, num_workers=0)
-    policy = get_policy(policy_name, source="physicalai")
+    # Full fine-tuning of these models exceeds one 40 GB A100 at batch size 2.
+    policy_options = {
+        "molmoact2": {"lora_enabled": True, "gradient_checkpointing": True},
+        "xr0": {"freeze_vision_encoder": True, "scheduler_decay_steps": None},
+    }.get(policy_name, {})
+    policy = get_policy(policy_name, source="physicalai", **policy_options)
     trainer = Trainer(
         default_root_dir=output_dir,
-        max_steps=int(os.environ.get("SIM_E2E_TRAIN_STEPS", "2")),
+        max_epochs=3,
+        max_steps=int(os.environ.get("SIM_E2E_TRAIN_STEPS", "-1")),
         accelerator=os.environ.get("SIM_E2E_ACCELERATOR", "auto"),
         devices=1,
         logger=False,
-        callbacks=[
-            ModelCheckpoint(dirpath=output_dir / "checkpoints", every_n_train_steps=1000, save_top_k=0, save_last=True)
-        ],
+        callbacks=[ModelCheckpoint(dirpath=output_dir / "checkpoints", save_top_k=0, save_last=True)],
         enable_checkpointing=True,
         enable_progress_bar=False,
     )
@@ -294,11 +298,13 @@ def test_train_export_and_run_in_simulation(scene: str, tmp_path: Path) -> None:
     assert score >= float(os.environ.get("SIM_E2E_MIN_SUCCESS", "0"))
 
 
+@pytest.mark.parametrize("train_steps", [None, 2])
 @pytest.mark.parametrize("record_video", [False, True])
 @pytest.mark.parametrize("policy_name", FIRST_PARTY_POLICIES)
 @pytest.mark.parametrize("scene", SCENES)
 def test_library_orchestration_with_mock_owner(
-    scene: str, policy_name: str, record_video: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    scene: str, policy_name: str, record_video: bool, train_steps: int | None, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Check train/export/Runtime wiring without claiming a simulated quality result."""
     import sys
@@ -397,18 +403,31 @@ def test_library_orchestration_with_mock_owner(
     monkeypatch.setenv("SIM_E2E_RECORD_VIDEO", "true" if record_video else "false")
     monkeypatch.setenv("SIM_E2E_ROLLOUT_SECONDS", "0.01")
     monkeypatch.setenv("SIM_E2E_ROLLOUTS", "2" if scene == "conveyor_sort" else "1")
-    monkeypatch.delenv("SIM_E2E_TRAIN_STEPS", raising=False)
+    if train_steps is None:
+        monkeypatch.delenv("SIM_E2E_TRAIN_STEPS", raising=False)
+    else:
+        monkeypatch.setenv("SIM_E2E_TRAIN_STEPS", str(train_steps))
     test_train_export_and_run_in_simulation(scene, tmp_path)
 
     trainer.fit.assert_called_once()
     assert make_data.call_args.kwargs["train_batch_size"] == 2
-    assert make_trainer.call_args.kwargs["max_steps"] == 2
+    assert make_trainer.call_args.kwargs["max_epochs"] == 3
+    assert make_trainer.call_args.kwargs["max_steps"] == (-1 if train_steps is None else train_steps)
     assert make_trainer.call_args.kwargs["callbacks"][0].save_last
     assert reset.call_count == (2 if scene == "conveyor_sort" else 1)
     assert runtime.run.call_count == reset.call_count
     assert runtime.disconnect.call_count == reset.call_count
     assert make_model.call_count == reset.call_count
-    get_policy.assert_called_once_with(policy_name, source="physicalai")
+    if policy_name == "molmoact2":
+        get_policy.assert_called_once_with(
+            policy_name, source="physicalai", lora_enabled=True, gradient_checkpointing=True
+        )
+    elif policy_name == "xr0":
+        get_policy.assert_called_once_with(
+            policy_name, source="physicalai", freeze_vision_encoder=True, scheduler_decay_steps=None
+        )
+    else:
+        get_policy.assert_called_once_with(policy_name, source="physicalai")
     expected = 0.5 if scene == "conveyor_sort" else 1.0
     result = json.loads((tmp_path / "results/result.json").read_text())
     assert result["score"] == pytest.approx(expected)
