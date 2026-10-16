@@ -30,7 +30,7 @@ jobs:
 
     steps:
       - name: Harden the runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           disable-sudo: false
           disable-telemetry: true
@@ -74,9 +74,9 @@ jobs:
       - name: Read version
         id: version
         run: |
-          VERSION="$(tr -d '[:space:]' < application/VERSION)"
+          APP_VERSION="$(grep -m1 '^version = ' application/backend/pyproject.toml | sed -E 's/version = "(.*)"/\1/')"
           SHORT_SHA="$(echo "$GITHUB_SHA" | head -c 8)"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "version=${APP_VERSION}" >> "$GITHUB_OUTPUT"
           echo "short-sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Log in to Container Registry

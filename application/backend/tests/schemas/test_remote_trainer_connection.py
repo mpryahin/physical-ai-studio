@@ -48,12 +48,12 @@ def test_manual_ssh_connection_uses_ec2_user_by_default() -> None:
     assert ManualSshConnection(hostname="gpu.example.test").user == "ec2-user"
 
 
-def test_ssh_connection_uses_trainer_ports_by_default() -> None:
+def test_ssh_connection_leaves_local_port_for_service_to_assign() -> None:
     connection = SshConnection(ssh_host_alias="training-box")
 
     assert connection.ssh_remote_port == 8001
-    assert connection.ssh_local_port == 8001
-    assert str(connection.url) == "http://127.0.0.1:8001/"
+    assert connection.ssh_local_port is None
+    assert connection.url is None
 
 
 def test_ssh_connection_rejects_alias_and_manual_host_together() -> None:

@@ -79,7 +79,7 @@ Open the completed stack's **Outputs** tab, then return to the **Add training ta
 4. Set **Key path** to the private key file corresponding to the public key passed to CloudFormation. The path is resolved on the Studio backend host.
 5. Select **Add training target**.
 
-After adding the trainer, return to [Training Policies](./06-training-policies.md) to create and start a model training job.
+Studio automatically assigns an available local loopback port for each SSH trainer. After adding the trainer, return to [Training Policies](./06-training-policies.md) to create and start a model training job.
 
 ## AWS Batch provider
 

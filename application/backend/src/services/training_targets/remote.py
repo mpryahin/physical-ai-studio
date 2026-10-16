@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from exceptions import RemoteResumeUnsupportedError
+from exceptions import InvalidResourceError, RemoteResumeUnsupportedError
 from schemas.job import RemoteTrainJobPayload, TrainingTarget, TrainJobPayload
 from services.remote_trainer_service import RemoteTrainerService
 
@@ -33,6 +33,9 @@ class RemoteTrainingTargetHandler:
         remote_trainer = await self.remote_trainer_service.get_remote_trainer(payload.remote_trainer_id)
         if remote_trainer.url is None:
             raise ValueError(f"Training on {remote_trainer.connection_mode.value} trainers is not available yet")
+        catalog = await self.remote_trainer_service.get_policy_catalog(payload.remote_trainer_id)
+        if payload.policy not in {policy.id for policy in catalog.available}:
+            raise InvalidResourceError("policy", f"{payload.policy!r} is not available on the selected trainer")
         return payload.model_copy(
             update={"remote_trainer_url": str(remote_trainer.url), "remote_trainer_name": remote_trainer.name}
         )

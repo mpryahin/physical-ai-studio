@@ -32,7 +32,7 @@ jobs:
       contents: read
     steps:
       - name: Harden the runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           disable-sudo: true
           disable-telemetry: true
@@ -77,7 +77,7 @@ jobs:
         device: [cuda, xpu]
     steps:
       - name: Harden the runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           disable-sudo: false
           disable-telemetry: true
@@ -109,7 +109,7 @@ jobs:
       - name: Set build metadata
         id: build-metadata
         run: |
-          echo "version=$(tr -d '[:space:]' < application/VERSION)" >> "$GITHUB_OUTPUT"
+          echo "version=$(grep -m1 '^version = ' application/backend/pyproject.toml | sed -E 's/version = \"(.*)\"/\1/')" >> "$GITHUB_OUTPUT"
           echo "created=$(date --utc --iso-8601=seconds)" >> "$GITHUB_OUTPUT"
           echo "library-version=$(grep -m1 '^version = ' library/pyproject.toml | sed -E 's/version = "(.*)"/\1/')" >> "$GITHUB_OUTPUT"
 
@@ -199,7 +199,7 @@ jobs:
         device: [cuda, xpu]
     steps:
       - name: Harden the runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           disable-sudo: false
           disable-telemetry: true
@@ -239,7 +239,7 @@ jobs:
       - name: Set build metadata
         id: build-metadata
         run: |
-          echo "version=$(tr -d '[:space:]' < application/VERSION)" >> "$GITHUB_OUTPUT"
+          echo "version=$(grep -m1 '^version = ' application/backend/pyproject.toml | sed -E 's/version = \"(.*)\"/\1/')" >> "$GITHUB_OUTPUT"
           echo "short-sha=$(echo "$GITHUB_SHA" | head -c 8)" >> "$GITHUB_OUTPUT"
           echo "created=$(date --utc --iso-8601=seconds)" >> "$GITHUB_OUTPUT"
           echo "library-version=$(grep -m1 '^version = ' library/pyproject.toml | sed -E 's/version = "(.*)"/\1/')" >> "$GITHUB_OUTPUT"

@@ -1,10 +1,10 @@
-from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Literal, Self
 from uuid import UUID
 
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, computed_field, model_validator
 
+from schemas.base import UTCDatetime
 from schemas.hardware import DeviceInfo, StorageInfo
 from schemas.remote_server import SSH_HOST_ALIAS_PATTERN
 
@@ -59,8 +59,11 @@ class SshConnection(BaseModel):
     ssh_remote_port: int = Field(
         default=8001, ge=1, le=65535, description="Loopback port on the SSH host the trainer container publishes."
     )
-    ssh_local_port: int = Field(
-        default=8001, ge=1, le=65535, description="Loopback port on the Studio host the tunnel binds to."
+    ssh_local_port: int | None = Field(
+        default=None,
+        ge=1,
+        le=65535,
+        description="Loopback port for the tunnel. Studio assigns an available port when omitted.",
     )
 
     @model_validator(mode="after")
@@ -80,8 +83,10 @@ class SshConnection(BaseModel):
         return self.ssh_connection.hostname
 
     @property
-    def url(self) -> AnyHttpUrl:
+    def url(self) -> AnyHttpUrl | None:
         """Local end of the tunnel."""
+        if self.ssh_local_port is None:
+            return None
         return AnyHttpUrl(f"http://127.0.0.1:{self.ssh_local_port}")
 
 
@@ -182,8 +187,8 @@ class RemoteTrainer(RemoteTrainerCreate):
     """Persisted remote trainer endpoint."""
 
     id: UUID
-    created_at: datetime | None = None
-    updated_at: datetime | None = None
+    created_at: UTCDatetime | None = None
+    updated_at: UTCDatetime | None = None
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -204,7 +209,7 @@ class RemoteTrainerHealth(BaseModel):
 
     remote_trainer_id: UUID
     status: HealthStatus
-    checked_at: datetime
+    checked_at: UTCDatetime
     latency_ms: int | None = Field(default=None, ge=0)
     devices: list[DeviceInfo] = Field(default_factory=list)
     storage: StorageInfo | None = Field(

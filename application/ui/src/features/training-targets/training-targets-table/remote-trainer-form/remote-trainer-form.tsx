@@ -81,7 +81,7 @@ export const RemoteTrainerForm = ({
     );
     const [sshIdentityFile, setSshIdentityFile] = useState(existingSsh?.ssh_connection?.identity_file ?? '');
     const [sshRemotePort, setSshRemotePort] = useState<number | undefined>(existingSsh?.ssh_remote_port ?? 8001);
-    const [sshLocalPort, setSshLocalPort] = useState<number | undefined>(existingSsh?.ssh_local_port ?? 8001);
+    const [sshLocalPort, setSshLocalPort] = useState<number | undefined>(existingSsh?.ssh_local_port ?? undefined);
     const [installPrerequisites, setInstallPrerequisites] = useState(false);
     const isEditing = remoteTrainer !== undefined;
     const { aliases } = useSshHostAliases(sshAvailable);
@@ -103,7 +103,7 @@ export const RemoteTrainerForm = ({
                     }
                   : null,
               ssh_remote_port: sshRemotePort ?? 8001,
-              ssh_local_port: sshLocalPort ?? 8001,
+              ssh_local_port: sshLocalPort ?? null,
           }
         : { connection_mode: 'direct', url };
     const values: RemoteTrainerFormValues = { name: name.trim(), connection };
@@ -134,10 +134,7 @@ export const RemoteTrainerForm = ({
 
     const hasValidSshHost = isManual ? sshHostname.trim() !== '' : sshHostAlias.trim() !== '';
     const canSubmit =
-        name.trim() !== '' &&
-        (isSsh
-            ? sshAvailable && hasValidSshHost && Boolean(sshRemotePort) && Boolean(sshLocalPort)
-            : url.trim() !== '');
+        name.trim() !== '' && (isSsh ? sshAvailable && hasValidSshHost && Boolean(sshRemotePort) : url.trim() !== '');
 
     const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
@@ -212,38 +209,6 @@ export const RemoteTrainerForm = ({
                             {isSsh && !sshAvailable && <Text>SSH is unavailable in this environment.</Text>}
                             {isSsh && sshAvailable && (
                                 <Flex direction='column' gap='size-100'>
-                                    <div className={classes.fieldRow}>
-                                        <NumberField
-                                            isRequired
-                                            label='Remote port'
-                                            value={sshRemotePort}
-                                            onChange={setSshRemotePort}
-                                            minValue={1}
-                                            maxValue={65535}
-                                            formatOptions={{ useGrouping: false }}
-                                            contextualHelp={
-                                                <InfoHelp title='Remote port'>
-                                                    Port where the trainer listens remotely.
-                                                </InfoHelp>
-                                            }
-                                            width='100%'
-                                        />
-                                        <NumberField
-                                            isRequired
-                                            label='Local port'
-                                            value={sshLocalPort}
-                                            onChange={setSshLocalPort}
-                                            minValue={1}
-                                            maxValue={65535}
-                                            formatOptions={{ useGrouping: false }}
-                                            contextualHelp={
-                                                <InfoHelp title='Local port'>
-                                                    Loopback port the tunnel binds to on this Studio host.
-                                                </InfoHelp>
-                                            }
-                                            width='100%'
-                                        />
-                                    </div>
                                     <Tabs
                                         selectedKey={sshHostSource}
                                         onSelectionChange={(key) => setSshHostSource(key as SshHostSource)}
@@ -333,6 +298,41 @@ export const RemoteTrainerForm = ({
                                             </DialogTrigger>
                                         </Flex>
                                     )}
+                                    <details>
+                                        <summary className={classes.advancedSettingsToggle}>Advanced settings</summary>
+                                        <div className={classes.fieldRow}>
+                                            <NumberField
+                                                label='Remote port'
+                                                value={sshRemotePort}
+                                                onChange={setSshRemotePort}
+                                                minValue={1}
+                                                maxValue={65535}
+                                                formatOptions={{ useGrouping: false }}
+                                                contextualHelp={
+                                                    <InfoHelp title='Remote port'>
+                                                        Port on the SSH host where the trainer is exposed. Change it if
+                                                        the port is already in use.
+                                                    </InfoHelp>
+                                                }
+                                                width='100%'
+                                            />
+                                            <NumberField
+                                                label='Local port'
+                                                value={sshLocalPort}
+                                                onChange={setSshLocalPort}
+                                                minValue={1}
+                                                maxValue={65535}
+                                                formatOptions={{ useGrouping: false }}
+                                                contextualHelp={
+                                                    <InfoHelp title='Local port'>
+                                                        Port on this Studio host for the SSH tunnel. Leave blank to
+                                                        assign one automatically.
+                                                    </InfoHelp>
+                                                }
+                                                width='100%'
+                                            />
+                                        </div>
+                                    </details>
                                     {!isEditing && (
                                         <Flex alignItems='center' gap='size-50'>
                                             <Checkbox
