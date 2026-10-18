@@ -20,6 +20,7 @@ class BatchSettings(BaseSettings):
     dataset_key: str = Field(default="dataset.zip", alias="PHYSICALAI_BATCH_DATASET_KEY")
     status_key: str = Field(default="status.json", alias="PHYSICALAI_BATCH_STATUS_KEY")
     artifact_key: str = Field(default="artifact.zip", alias="PHYSICALAI_BATCH_ARTIFACT_KEY")
+    metrics_key: str = Field(default="metrics.csv", alias="PHYSICALAI_BATCH_METRICS_KEY")
     status_interval_s: float = Field(default=5.0, ge=0.0, alias="PHYSICALAI_BATCH_STATUS_INTERVAL_S")
 
     @property

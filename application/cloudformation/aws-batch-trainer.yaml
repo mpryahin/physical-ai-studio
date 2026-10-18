@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: |-
-  Creates AWS Batch resources for Physical AI Studio training jobs.
+  Creates AWS Batch resources for Physical AI Studio training jobs in us-east-1 (N. Virginia).
   Compute environments scale to zero when no jobs are running.
 
 Metadata:
@@ -23,6 +23,15 @@ Parameters:
     Description: >-
       AWS Batch terminates a job that runs longer than this (default 24 hours), so a hung
       run cannot accrue charges indefinitely.
+
+Rules:
+  SupportedRegion:
+    Assertions:
+      - Assert:
+          Fn::Equals:
+            - Ref: AWS::Region
+            - us-east-1
+        AssertDescription: Deploy this stack in us-east-1 (N. Virginia).
 
 Resources:
   TrainerVpc:
@@ -193,6 +202,13 @@ Resources:
                   - batch:DescribeJobQueues
                   - batch:DescribeJobs
                 Resource: "*"
+        - PolicyName: StudioTrainerLogs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: logs:GetLogEvents
+                Resource: !GetAtt TrainerLogGroup.Arn
 
   BatchJobRole:
     Type: AWS::IAM::Role
@@ -272,9 +288,9 @@ Resources:
         AllocationStrategy: BEST_FIT
         MinvCpus: 0
         DesiredvCpus: 0
-        MaxvCpus: 4
+        MaxvCpus: 8
         InstanceTypes:
-          - g4dn.xlarge
+          - g4dn.2xlarge
         Ec2Configuration:
           - ImageType: ECS_AL2023_NVIDIA
         InstanceRole: !GetAtt BatchInstanceProfile.Arn
@@ -314,7 +330,7 @@ Resources:
         Tags:
           Name: !Sub ${AWS::StackName}-g6e
 
-  P5ComputeEnvironment:
+  G7eComputeEnvironment:
     Type: AWS::Batch::ComputeEnvironment
     Properties:
       Type: MANAGED
@@ -324,9 +340,9 @@ Resources:
         AllocationStrategy: BEST_FIT
         MinvCpus: 0
         DesiredvCpus: 0
-        MaxvCpus: 16
+        MaxvCpus: 32
         InstanceTypes:
-          - p5.4xlarge
+          - g7e.8xlarge
         Ec2Configuration:
           - ImageType: ECS_AL2023_NVIDIA
         InstanceRole: !GetAtt BatchInstanceProfile.Arn
@@ -338,7 +354,7 @@ Resources:
         Subnets:
           - !Ref TrainerSubnet
         Tags:
-          Name: !Sub ${AWS::StackName}-p5
+          Name: !Sub ${AWS::StackName}-g7e
 
   G4dnJobQueue:
     Type: AWS::Batch::JobQueue
@@ -358,14 +374,14 @@ Resources:
         - Order: 1
           ComputeEnvironment: !Ref G6eComputeEnvironment
 
-  P5JobQueue:
+  G7eJobQueue:
     Type: AWS::Batch::JobQueue
     Properties:
       State: ENABLED
       Priority: 1
       ComputeEnvironmentOrder:
         - Order: 1
-          ComputeEnvironment: !Ref P5ComputeEnvironment
+          ComputeEnvironment: !Ref G7eComputeEnvironment
 
   TrainerLogGroup:
     Type: AWS::Logs::LogGroup
@@ -387,7 +403,7 @@ Resources:
       Timeout:
         AttemptDurationSeconds: !Ref JobTimeoutSeconds
       ContainerProperties:
-        Image: ghcr.io/open-edge-platform/physicalai-trainer-cuda:main
+        Image: ghcr.io/mpryahin/physicalai-trainer-cuda:main
         Command:
           - /bin/sh
           - -c
@@ -423,7 +439,7 @@ Resources:
       Timeout:
         AttemptDurationSeconds: !Ref JobTimeoutSeconds
       ContainerProperties:
-        Image: ghcr.io/open-edge-platform/physicalai-trainer-cuda:main
+        Image: ghcr.io/mpryahin/physicalai-trainer-cuda:main
         Command:
           - /bin/sh
           - -c
@@ -450,7 +466,7 @@ Resources:
             awslogs-region: !Ref AWS::Region
             awslogs-stream-prefix: g6e
 
-  P5JobDefinition:
+  G7eJobDefinition:
     Type: AWS::Batch::JobDefinition
     Properties:
       Type: container
@@ -459,7 +475,7 @@ Resources:
       Timeout:
         AttemptDurationSeconds: !Ref JobTimeoutSeconds
       ContainerProperties:
-        Image: ghcr.io/open-edge-platform/physicalai-trainer-cuda:main
+        Image: ghcr.io/mpryahin/physicalai-trainer-cuda:main
         Command:
           - /bin/sh
           - -c
@@ -484,7 +500,7 @@ Resources:
           Options:
             awslogs-group: !Ref TrainerLogGroup
             awslogs-region: !Ref AWS::Region
-            awslogs-stream-prefix: p5
+            awslogs-stream-prefix: g7e
 
   StudioBatchSubmitPolicy:
     Type: AWS::IAM::Policy
@@ -500,10 +516,10 @@ Resources:
             Resource:
               - !Ref G4dnJobDefinition
               - !Ref G6eJobDefinition
-              - !Ref P5JobDefinition
+              - !Ref G7eJobDefinition
               - !Ref G4dnJobQueue
               - !Ref G6eJobQueue
-              - !Ref P5JobQueue
+              - !Ref G7eJobQueue
           # TerminateJob takes a job id, not a queue/definition ARN, and Batch
           # exposes no condition key to scope it, so "*" is the narrowest option.
           - Effect: Allow
@@ -590,15 +606,15 @@ Resources:
         studio_role_arn: !GetAtt StudioRole.Arn
         bucket: !Ref JobsBucket
         targets:
-          g4dn.xlarge:
+          g4dn.2xlarge:
             queue: !Ref G4dnJobQueue
             job_definition: !Ref G4dnJobDefinition
           g6e.2xlarge:
             queue: !Ref G6eJobQueue
             job_definition: !Ref G6eJobDefinition
-          p5.4xlarge:
-            queue: !Ref P5JobQueue
-            job_definition: !Ref P5JobDefinition
+          g7e.8xlarge:
+            queue: !Ref G7eJobQueue
+            job_definition: !Ref G7eJobDefinition
 
 Outputs:
   ConfigurationUri:

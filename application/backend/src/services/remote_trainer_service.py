@@ -43,7 +43,7 @@ from schemas.remote_trainer import (
     SshConnection,
 )
 from services import remote_trainer_tunnel_manager
-from services.aws_batch import probe_aws_batch
+from services.aws_batch import batch_policy_catalog, probe_aws_batch
 from services.ssh import host_installer, persistent_trainer
 from services.ssh.transport import SshTransport
 from training.policy_catalog import PolicyCatalog
@@ -98,6 +98,8 @@ class RemoteTrainerService:
     async def get_policy_catalog(self, remote_trainer_id: UUID) -> PolicyCatalog:
         """Ask the registered trainer what its own Python environment can train."""
         trainer = await self.get_remote_trainer(remote_trainer_id)
+        if isinstance(trainer.connection, AwsBatchConnection):
+            return batch_policy_catalog(trainer.connection)
         try:
             async with httpx.AsyncClient(timeout=10, follow_redirects=False, trust_env=False) as client:
                 response = await client.get(f"{str(trainer.url).rstrip('/')}/policies")
@@ -636,7 +638,14 @@ class RemoteTrainerService:
         if isinstance(remote_trainer.connection, SshConnection):
             await self._require_no_active_jobs(remote_trainer_id)
         await self._cancel_launch(remote_trainer_id)
-        await persistent_trainer.stop(remote_trainer)
+        try:
+            await persistent_trainer.stop(remote_trainer)
+        except Exception as error:
+            logger.warning(
+                "Could not clean up remote container for trainer '{}'; removing its local configuration: {}",
+                remote_trainer.name,
+                error,
+            )
         await remote_trainer_tunnel_manager.stop_tunnel(remote_trainer_id)
         await self.repo.delete_by_id(remote_trainer_id)
 

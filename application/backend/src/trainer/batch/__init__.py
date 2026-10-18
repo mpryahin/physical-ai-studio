@@ -59,13 +59,17 @@ def install_sigterm_handler(stop: threading.Event) -> None:
 def run(storage: JobStorage, settings: BatchSettings, *, stop: threading.Event | None = None) -> int:
     """Fetch inputs, train, publish outputs. Returns the process exit code."""
     stop = stop or threading.Event()
-    reporter = StatusReporter(storage, settings.status_interval_s)
     trainer_settings = get_settings()
     work_dir = trainer_settings.storage_dir / "batch" / settings.job_id
     archive_path = work_dir / "dataset.zip"
     dataset_dir = work_dir / "dataset"
     model_dir = trainer_settings.models_dir / settings.job_id
     cache_dir = trainer_settings.storage_dir / "cache" / settings.job_id
+    reporter = StatusReporter(
+        storage,
+        settings.status_interval_s,
+        metrics_paths=(cache_dir / "version_0" / "metrics.csv", model_dir / "version_0" / "metrics.csv"),
+    )
 
     try:
         reporter.finish(TrainerJobStatus.RUNNING, progress=0, message="Fetching dataset")

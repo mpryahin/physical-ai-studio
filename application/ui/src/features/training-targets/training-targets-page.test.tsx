@@ -370,7 +370,10 @@ describe('TrainingTargetsPage', () => {
         expect(within(dialog).getByRole('button', { name: 'Add training target' })).toBeDisabled();
         expect(within(dialog).queryByRole('textbox', { name: /^Name/ })).not.toBeInTheDocument();
         expect(dialog).not.toHaveTextContent(/instance/i);
-        const deployLink = within(dialog).getByRole('link', { name: 'Deploy AWS Batch stack' });
+        const deployLink = within(dialog).getByRole<HTMLAnchorElement>('link', { name: 'Deploy AWS Batch stack' });
+        const deployUrl = new URL(deployLink.href);
+        expect(deployUrl.hostname).toBe('us-east-1.console.aws.amazon.com');
+        expect(deployUrl.searchParams.get('region')).toBe('us-east-1');
         expect(deployLink).toHaveAttribute('target', '_blank');
         expect(deployLink).toHaveAttribute('rel', 'noopener noreferrer');
         expect(deployLink.getAttribute('href')).toContain('aws-batch-trainer.yaml');

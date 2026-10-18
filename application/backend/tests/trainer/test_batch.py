@@ -126,6 +126,19 @@ def test_run_resets_run_options_from_the_serialised_spec(trainer_storage, job_ro
     assert mock_run.call_args.args[0].run_options.resume_from is None
 
 
+def test_run_publishes_live_metric_snapshots(trainer_storage, job_root: Path, settings: BatchSettings) -> None:
+    def train(spec, *, output_dir, cache_dir, report, **kwargs) -> None:
+        metrics = cache_dir / "version_0" / "metrics.csv"
+        metrics.parent.mkdir(parents=True)
+        metrics.write_text("step,train/loss\n0,1.5\n")
+        report(10, "Training", None)
+        assert (job_root / settings.metrics_key).read_text() == metrics.read_text()
+        _completed_run(spec, output_dir=output_dir)
+
+    with patch("training.run_training_job", side_effect=train):
+        assert run(LocalDirJobStorage(job_root, settings), settings) == EXIT_OK
+
+
 def test_run_reports_canceled_when_stop_is_requested(trainer_storage, job_root: Path, settings) -> None:
     stop = threading.Event()
     stop.set()
@@ -175,6 +188,35 @@ def test_status_reporter_swallows_storage_errors() -> None:
     storage = MagicMock()
     storage.put_status.side_effect = OSError("s3 down")
     StatusReporter(storage, interval_s=0).report(1, None, None)
+
+
+def test_status_reporter_publishes_metrics_during_training_and_after_model_publish(tmp_path: Path) -> None:
+    cache = tmp_path / "cache" / "metrics.csv"
+    output = tmp_path / "output" / "metrics.csv"
+    cache.parent.mkdir()
+    output.parent.mkdir()
+    cache.write_text("step,train/loss\n0,1.5\n")
+    storage = MagicMock()
+    reporter = StatusReporter(storage, interval_s=0, metrics_paths=(cache, output))
+
+    reporter.report(10, "Training", None)
+    cache.rename(output)
+    reporter.finish(TrainerJobStatus.COMPLETED, progress=100)
+
+    assert [entry.args[0] for entry in storage.put_metrics.call_args_list] == [cache, output]
+    assert storage.method_calls[0][0] == "put_metrics"
+    assert storage.method_calls[1][0] == "put_status"
+
+
+def test_metrics_upload_failure_does_not_prevent_failure_reporting(tmp_path: Path) -> None:
+    metrics = tmp_path / "metrics.csv"
+    metrics.write_text("step,train/loss\n0,1.5\n")
+    storage = MagicMock()
+    storage.put_metrics.side_effect = OSError("S3 unavailable")
+    StatusReporter(storage, interval_s=0, metrics_paths=(metrics,)).finish(
+        TrainerJobStatus.FAILED, progress=0, message="CUDA OOM"
+    )
+    assert storage.put_status.call_args.args[0].status is TrainerJobStatus.FAILED
 
 
 def test_batch_job_status_round_trips_through_json() -> None:
@@ -231,3 +273,5 @@ def test_s3_storage_addresses_objects_under_the_job_prefix(tmp_path: Path, setti
 
     storage.put_artifact(tmp_path / "artifact.zip")
     client.upload_file.assert_called_once_with(str(tmp_path / "artifact.zip"), "bucket", "jobs/job-123/artifact.zip")
+    storage.put_metrics(tmp_path / "metrics.csv")
+    assert client.upload_file.call_args.args == (str(tmp_path / "metrics.csv"), "bucket", "jobs/job-123/metrics.csv")

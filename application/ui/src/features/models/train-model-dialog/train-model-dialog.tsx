@@ -97,7 +97,7 @@ export const TrainModelDialog = ({ baseModel, close, defaultMaxEpochs = 5 }: Tra
                   const entry = remoteTrainerHealthById.get(remoteTrainer.id);
                   const displayHealth = getDisplayHealth(remoteTrainer.id, entry?.health, entry?.hasError ?? false);
                   const isChecking = entry?.isChecking ?? false;
-                  const devices = displayHealth?.devices ?? [];
+                  const devices = remoteTrainer.connection_mode === 'aws_batch' ? [] : (displayHealth?.devices ?? []);
                   const busyKeys = busyGpuKeysFor(remoteTrainer.id, devices);
                   const isTraining = busyKeys.size > 0;
                   const freeCount = devices.filter((device) => !busyKeys.has(gpuKey(device))).length;
@@ -129,6 +129,8 @@ export const TrainModelDialog = ({ baseModel, close, defaultMaxEpochs = 5 }: Tra
     const [targetId, setTargetId] = useState<Key | null>(LOCAL_TARGET_ID);
     const remoteTrainerId =
         targetId === null || targetId === LOCAL_TARGET_ID ? undefined : targetRawId(String(targetId));
+    const isBatchTarget =
+        remoteTrainers.find((trainer) => trainer.id === remoteTrainerId)?.connection_mode === 'aws_batch';
     const {
         data: availablePolicies = [],
         isLoading: isLoadingPolicies,
@@ -190,7 +192,8 @@ export const TrainModelDialog = ({ baseModel, close, defaultMaxEpochs = 5 }: Tra
     } = useRemoteTrainerHealth(isRemoteTarget ? targetRawId(selectedTarget.id) : null);
     const remoteUnavailable =
         isRemoteTarget &&
-        (remoteTrainerHealth?.status === 'unreachable' ||
+        ((isBatchTarget && remoteTrainerHealth !== undefined && remoteTrainerHealth?.status !== 'healthy') ||
+            remoteTrainerHealth?.status === 'unreachable' ||
             remoteTrainerHealth?.status === 'starting' ||
             remoteTrainerHealth?.reason_code === 'docker_unavailable' ||
             remoteTrainerHealth?.reason_code === 'accelerator_unavailable' ||
@@ -217,13 +220,14 @@ export const TrainModelDialog = ({ baseModel, close, defaultMaxEpochs = 5 }: Tra
             (requirement) =>
                 requirement.required && (requirement.status === 'missing_token' || requirement.status === 'denied')
         ) === true;
-    const remoteDevices = remoteTrainerHealth?.devices ?? [];
+    const remoteDevices = isBatchTarget ? [] : (remoteTrainerHealth?.devices ?? []);
     const busyGpuKeys = busyGpuKeysFor(targetRawId(selectedTarget?.id ?? ''), remoteDevices);
     const selectedRemoteDevice =
         selectedGpuKey === null
             ? (remoteDevices.find((device) => !busyGpuKeys.has(gpuKey(device))) ?? remoteDevices[0] ?? null)
             : (remoteDevices.find((device) => gpuKey(device) === selectedGpuKey) ?? null);
-    const selectedGpuUnavailable = isRemoteTarget && selectedGpuKey !== null && selectedRemoteDevice === null;
+    const selectedGpuUnavailable =
+        isRemoteTarget && !isBatchTarget && selectedGpuKey !== null && selectedRemoteDevice === null;
     const selectedGpuBusy = selectedRemoteDevice !== null && busyGpuKeys.has(gpuKey(selectedRemoteDevice));
     // Default to the first free GPU, or the first GPU when all are occupied.
     const activeDevice = isRemoteTarget ? selectedRemoteDevice : bestDevice;
@@ -339,11 +343,15 @@ export const TrainModelDialog = ({ baseModel, close, defaultMaxEpochs = 5 }: Tra
                 // Final guard: the remote trainer may have gone offline since the last
                 // poll, so re-check availability right before submitting the job.
                 const latestHealth = await checkRemoteTrainerHealth();
-                if (latestHealth === null || latestHealth.status === 'unreachable') {
+                if (
+                    latestHealth === null ||
+                    latestHealth.status === 'unreachable' ||
+                    (isBatchTarget && latestHealth.status !== 'healthy')
+                ) {
                     setSubmitError("Can't reach the remote trainer right now. Make sure it's running, then try again.");
                     return;
                 }
-                const latestDevices = latestHealth.devices ?? [];
+                const latestDevices = isBatchTarget ? [] : (latestHealth.devices ?? []);
                 const latestBusyGpuKeys = busyGpuKeysFor(targetRawId(selectedTarget.id), latestDevices);
                 submissionDevice =
                     selectedGpuKey === null

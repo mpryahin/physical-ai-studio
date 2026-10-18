@@ -21,6 +21,9 @@ describe('RemoteTrainerForm', () => {
         await user.click(screen.getByRole('tab', { name: /ssh tunnel/i }));
         await user.click(screen.getByRole('tab', { name: /connection details/i }));
 
+        const deployUrl = new URL(screen.getByRole<HTMLAnchorElement>('link', { name: 'Deploy AWS stack' }).href);
+        expect(deployUrl.hostname).toBe('us-east-1.console.aws.amazon.com');
+        expect(deployUrl.searchParams.get('region')).toBe('us-east-1');
         expect(screen.getByText('Connect through SSH when the trainer is not directly reachable.')).toBeInTheDocument();
         expect(screen.getByRole('tab', { name: /connection details/i })).toHaveAttribute('aria-selected', 'true');
         expect(screen.getByRole('textbox', { name: /^User/ })).toHaveValue('ec2-user');

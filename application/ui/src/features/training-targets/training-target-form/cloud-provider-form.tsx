@@ -11,7 +11,7 @@ import { ReactComponent as AwsIcon } from '../../../assets/icons/aws-icon.svg';
 import classes from '../training-targets-table/remote-trainer-form/remote-trainer-form.module.css';
 
 const AWS_STACK_URL =
-    'https://eu-west-1.console.aws.amazon.com/cloudformation/home?region=eu-west-1' +
+    'https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1' +
     '#/stacks/create/review?templateURL=' +
     encodeURIComponent(
         'https://physical-ai-studio.s3.eu-west-1.amazonaws.com/aws-cf-templates/aws-batch-trainer.yaml'

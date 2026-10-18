@@ -3,15 +3,12 @@ import os
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
 
-from schemas.hardware import DeviceType
 from schemas.remote_trainer import AwsBatchResourceConfiguration
-from services.ssh.trainer_image import trainer_image_ref
 from trainer.batch.settings import BatchSettings
 
 
@@ -25,8 +22,11 @@ def test_template_configuration_matches_resource_schema() -> None:
     configuration = template["Resources"]["EmptyJobsBucket"]["Properties"]["Configuration"]
     configuration["schema_version"] = int(configuration["schema_version"])
     parsed = AwsBatchResourceConfiguration.model_validate(configuration)
-    assert set(parsed.targets) == {"g4dn.xlarge", "g6e.2xlarge", "p5.4xlarge"}
+    assert set(parsed.targets) == {"g4dn.2xlarge", "g6e.2xlarge", "g7e.8xlarge"}
     assert parsed.region == "AWS::Region"
+    assert template["Rules"]["SupportedRegion"]["Assertions"][0]["Assert"] == {
+        "Fn::Equals": [{"Ref": "AWS::Region"}, "us-east-1"]
+    }
     assert parsed.studio_role_arn == "StudioRole.Arn"
     assert set(template["Outputs"]) == {"ConfigurationUri"}
 
@@ -37,9 +37,17 @@ def test_configuration_object_is_excluded_from_data_expiration() -> None:
     assert all(rule["ExpirationInDays"] == "30" for rule in rules)
 
 
-def test_batch_uses_cuda_trainer_image_without_image_parameter() -> None:
+def test_studio_can_read_only_the_trainer_log_group() -> None:
+    policies = _template()["Resources"]["StudioRole"]["Properties"]["Policies"]
+    statements = [statement for policy in policies for statement in policy["PolicyDocument"]["Statement"]]
+    logs = next(statement for statement in statements if statement["Action"] == "logs:GetLogEvents")
+    assert logs["Effect"] == "Allow"
+    assert logs["Resource"] == "TrainerLogGroup.Arn"
+
+
+def test_batch_uses_ssh_trainer_image_without_image_parameter() -> None:
     template = _template()
-    image = trainer_image_ref("ghcr.io/open-edge-platform", DeviceType.CUDA, "main")
+    image = "ghcr.io/open-edge-platform/physicalai-trainer-cuda:main"
     definitions = [
         resource for resource in template["Resources"].values() if resource["Type"] == "AWS::Batch::JobDefinition"
     ]
@@ -47,8 +55,15 @@ def test_batch_uses_cuda_trainer_image_without_image_parameter() -> None:
     assert all(definition["Properties"]["ContainerProperties"]["Image"] == image for definition in definitions)
     assert "TrainerImage" not in json.dumps(template)
 
+    ssh_path = Path(__file__).resolve().parents[2] / "cloudformation" / "remote-trainer.yaml"
+    ssh_template = yaml.load(ssh_path.read_text(), Loader=yaml.BaseLoader)
+    user_data = ssh_template["Resources"]["TrainerInstance"]["Properties"]["UserData"]["Fn::Base64"]
+    repository, tag = image.rsplit(":", 1)
+    assert f'IMAGE="{repository}"' in user_data
+    assert f'TAG="{tag}"' in user_data
 
-@pytest.mark.parametrize("definition", ["G4dnJobDefinition", "G6eJobDefinition", "P5JobDefinition"])
+
+@pytest.mark.parametrize("definition", ["G4dnJobDefinition", "G6eJobDefinition", "G7eJobDefinition"])
 @pytest.mark.parametrize("prefix", ["jobs/job-id", "jobs/job with 'quotes'; $(exit 1)"])
 def test_job_prefix_parameter_reaches_trainer(definition: str, prefix: str, tmp_path: Path) -> None:
     properties = _template()["Resources"][definition]["Properties"]
@@ -82,7 +97,7 @@ def test_job_definitions_keep_resource_limits_and_use_defaults() -> None:
     for definition, vcpus, memory in [
         ("G4dnJobDefinition", "4", "14000"),
         ("G6eJobDefinition", "8", "30000"),
-        ("P5JobDefinition", "16", "240000"),
+        ("G7eJobDefinition", "16", "240000"),
     ]:
         properties = template["Resources"][definition]["Properties"]
         assert properties["Timeout"] == {"AttemptDurationSeconds": "JobTimeoutSeconds"}
@@ -123,7 +138,7 @@ def test_template_publishes_configuration_and_cleans_bucket(request_type: str) -
     code = template["Resources"]["BucketCleanupFunction"]["Properties"]["Code"]["ZipFile"]
     boto = MagicMock()
     response = MagicMock()
-    namespace: dict[str, Any] = {}
+    namespace = {}
     event = {
         "RequestType": request_type,
         "PhysicalResourceId": "stable-resource",
