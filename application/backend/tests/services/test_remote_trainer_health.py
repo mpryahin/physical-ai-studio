@@ -280,8 +280,7 @@ async def test_check_remote_trainer_probes_aws_batch_without_http() -> None:
     http_client.assert_not_called()
     batch.describe_job_queues.assert_called_once_with(jobQueues=["q1", "q2"])
     assert result.status == "healthy"
-    assert [d.name for d in result.devices] == ["g4dn.xlarge", "p5.4xlarge"]
-    assert all(d.type == "cuda" for d in result.devices)
+    assert result.devices == []
 
 
 @pytest.mark.anyio

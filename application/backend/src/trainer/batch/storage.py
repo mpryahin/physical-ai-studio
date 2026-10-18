@@ -33,6 +33,8 @@ class JobStorage(Protocol):
 
     def put_artifact(self, archive: Path) -> None: ...
 
+    def put_metrics(self, path: Path) -> None: ...
+
 
 class LocalDirJobStorage:
     """Job storage rooted at a local directory."""
@@ -53,3 +55,6 @@ class LocalDirJobStorage:
 
     def put_artifact(self, archive: Path) -> None:
         shutil.copyfile(archive, self._root / self._settings.artifact_key)
+
+    def put_metrics(self, path: Path) -> None:
+        shutil.copyfile(path, self._root / self._settings.metrics_key)

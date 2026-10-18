@@ -4,6 +4,7 @@ import { HttpResponse } from 'msw';
 
 import { http } from '../../../api/utils';
 import { server } from '../../../msw-node-setup';
+import { getMockedRemoteTrainer } from '../../../test-utils/mocks/mock-remote-trainer';
 import { render } from '../../../test-utils/render';
 import { TrainingTargetRow } from './training-target-row';
 import { TrainingTargetsTable } from './training-targets-table';
@@ -40,6 +41,39 @@ const directUrlRow = (trainer: TrainingTargetRow['trainer']): TrainingTargetRow 
 describe('TrainingTargetsTable', () => {
     beforeEach(() => {
         server.use(http.get(REMOTE_TRAINER_HEALTH_PATH, () => HttpResponse.json(healthyTrainer)));
+    });
+
+    it('shows Batch compute configuration and S3 storage without missing-host warnings', async () => {
+        const batchTrainer = getMockedRemoteTrainer({
+            name: 'AWS Provider',
+            connection_mode: 'aws_batch',
+            url: null,
+            connection: {
+                connection_mode: 'aws_batch',
+                schema_version: 1,
+                region: 'us-east-1',
+                studio_role_arn: 'arn:aws:iam::123:role/studio',
+                bucket: 'training-jobs',
+                targets: { 'g4dn.2xlarge': { queue: 'queue', job_definition: 'definition' } },
+            },
+        });
+        server.use(
+            http.get(REMOTE_TRAINER_HEALTH_PATH, () =>
+                HttpResponse.json({ ...healthyTrainer, remote_trainer_id: batchTrainer.id, devices: [], storage: null })
+            )
+        );
+
+        render(<TrainingTargetsTable rows={[directUrlRow(batchTrainer)]} onEdit={rs.fn()} onDelete={rs.fn()} />);
+
+        expect(await screen.findByText('AWS credentials and job queues are accessible')).toBeInTheDocument();
+        expect(screen.getByText('Batch service')).toBeInTheDocument();
+        expect(screen.getByText('g4dn.2xlarge · allocated per job')).toBeInTheDocument();
+        expect(screen.getByText('On demand')).toBeInTheDocument();
+        expect(screen.getByText('s3://training-jobs')).toBeInTheDocument();
+        expect(screen.queryByText('Unknown')).not.toBeInTheDocument();
+        expect(screen.queryByText('Not reported')).not.toBeInTheDocument();
+        expect(screen.queryByText('no compute device reported')).not.toBeInTheDocument();
+        expect(screen.queryByText('no storage reported')).not.toBeInTheDocument();
     });
 
     it('disables installation while SSH host setup is in progress', async () => {

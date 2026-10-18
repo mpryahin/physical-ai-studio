@@ -1063,6 +1063,32 @@ async def test_delete_cancels_an_inflight_launch_before_stopping_container() -> 
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize(
+    "error",
+    [SshConnectionError("offline"), SshAuthenticationError("offline"), RuntimeError("Container cleanup failed")],
+)
+async def test_delete_removes_ssh_trainer_when_remote_cleanup_fails(error: Exception) -> None:
+    session = _session()
+    session.execute.return_value = MagicMock()
+    session.execute.return_value.scalar_one_or_none.return_value = None
+    trainer = _remote_trainer(_ssh(), name="offline")
+    repository = MagicMock()
+    repository.get_by_id = AsyncMock(return_value=trainer)
+    repository.delete_by_id = AsyncMock()
+
+    with (
+        patch(f"{MODULE}.RemoteTrainerRepository", return_value=repository),
+        patch(f"{MODULE}.persistent_trainer.stop", new_callable=AsyncMock, side_effect=error) as stop,
+        patch(f"{MODULE}.remote_trainer_tunnel_manager.stop_tunnel", new_callable=AsyncMock) as stop_tunnel,
+    ):
+        await RemoteTrainerService(session).delete_remote_trainer(trainer.id)
+
+    stop.assert_awaited_once_with(trainer)
+    stop_tunnel.assert_awaited_once_with(trainer.id)
+    repository.delete_by_id.assert_awaited_once_with(trainer.id)
+
+
+@pytest.mark.anyio
 async def test_delete_stops_the_tunnel_manager() -> None:
     session = _session()
     remote_trainer = _remote_trainer()

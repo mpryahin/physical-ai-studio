@@ -40,7 +40,7 @@ const SSH_HOST_SETUP_URL =
     'application/docs/07-remote-training.md#prepare-an-ssh-host';
 const AWS_TEMPLATE_BASE = 'https://physical-ai-studio.s3.eu-west-1.amazonaws.com/aws-cf-templates/';
 const awsStackUrl = (template: string, stackName: string) =>
-    'https://eu-west-1.console.aws.amazon.com/cloudformation/home?region=eu-west-1' +
+    'https://us-east-1.console.aws.amazon.com/cloudformation/home?region=us-east-1' +
     `#/stacks/create/review?templateURL=${encodeURIComponent(AWS_TEMPLATE_BASE + template)}` +
     `&stackName=${stackName}`;
 const AWS_EC2_STACK_URL = awsStackUrl('remote-trainer.yaml', 'physical-ai-studio-remote-trainer');

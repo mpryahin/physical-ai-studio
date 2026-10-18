@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from time import perf_counter
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 from loguru import logger
 
-from schemas.hardware import DeviceInfo, DeviceType
 from schemas.remote_trainer import (
     AwsBatchConnection,
     AwsBatchProviderConfiguration,
@@ -17,6 +17,7 @@ from schemas.remote_trainer import (
     HealthStatus,
     RemoteTrainerHealth,
 )
+from training.policy_catalog import PolicyCatalog
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -24,6 +25,56 @@ if TYPE_CHECKING:
 
 _PROBE_TIMEOUT_S = 10.0
 _MAX_CONFIGURATION_BYTES = 65536
+
+POLICY_INSTANCE_TYPES = {
+    "act": "g4dn.2xlarge",
+    "pi05": "g6e.2xlarge",
+    "smolvla": "g4dn.2xlarge",
+    "molmoact2": "g7e.8xlarge",
+}
+
+
+def aws_batch_trainer_url(connection: AwsBatchConnection) -> str:
+    """Encode resolved resources in a restart-stable trainer URL."""
+    query = urlencode(
+        {
+            "studio_role_arn": connection.studio_role_arn,
+            "targets": json.dumps({key: target.model_dump() for key, target in connection.targets.items()}),
+            **({"configuration_uri": connection.configuration_uri} if connection.configuration_uri else {}),
+        }
+    )
+    return f"aws-batch://{connection.region}/{connection.bucket}?{query}"
+
+
+def aws_batch_connection_from_url(url: str) -> AwsBatchConnection:
+    """Restore pinned Batch resources without consulting mutable trainer configuration."""
+    location = urlsplit(url)
+    if location.scheme != "aws-batch":
+        raise ValueError("Expected an aws-batch trainer URL")
+    query = parse_qs(location.query, strict_parsing=True)
+    try:
+        return AwsBatchConnection(
+            region=location.netloc,
+            bucket=location.path.removeprefix("/"),
+            studio_role_arn=query["studio_role_arn"][0],
+            targets=json.loads(query["targets"][0]),
+            configuration_uri=query.get("configuration_uri", [None])[0],
+        )
+    except KeyError as exc:
+        raise ValueError(f"Batch trainer URL is missing {exc.args[0]}") from exc
+
+
+def batch_policy_catalog(connection: AwsBatchConnection) -> PolicyCatalog:
+    """Declare capabilities of the provisioned CUDA trainer image."""
+    from training.policy_catalog import declared_policy_catalog
+
+    return declared_policy_catalog(
+        {
+            policy: ["torch", "openvino", "onnx", "executorch"] if policy == "act" else ["torch", "openvino"]
+            for policy, instance_type in POLICY_INSTANCE_TYPES.items()
+            if instance_type in connection.targets
+        }
+    )
 
 
 def _make_session(connection: AwsBatchConnection) -> Any:
@@ -79,26 +130,18 @@ def _probe_sync(connection: AwsBatchConnection) -> tuple[HealthStatus, str | Non
 async def probe_aws_batch(
     remote_trainer_id: UUID, connection: AwsBatchConnection, checked_at: datetime
 ) -> RemoteTrainerHealth:
-    """Check credentials and job queues; report one CUDA device per provisioned instance type."""
+    """Check credentials and job queues without representing queues as physical GPUs."""
     started = perf_counter()
     try:
         status, reason_code = await asyncio.wait_for(asyncio.to_thread(_probe_sync, connection), _PROBE_TIMEOUT_S)
     except TimeoutError:
         status, reason_code = "unreachable", "timeout"
-    devices = (
-        [
-            DeviceInfo(type=DeviceType.CUDA, name=instance_type, index=index)
-            for index, instance_type in enumerate(connection.targets)
-        ]
-        if status == "healthy"
-        else []
-    )
     return RemoteTrainerHealth(
         remote_trainer_id=remote_trainer_id,
         status=status,
         checked_at=checked_at,
         latency_ms=round((perf_counter() - started) * 1000),
-        devices=devices,
+        devices=[],
         storage=None,
         reason_code=reason_code,
     )

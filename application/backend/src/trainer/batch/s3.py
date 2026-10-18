@@ -52,3 +52,6 @@ class S3JobStorage:
 
     def put_artifact(self, archive: Path) -> None:
         self._client.upload_file(str(archive), self._bucket, self._key(self._settings.artifact_key))
+
+    def put_metrics(self, path: Path) -> None:
+        self._client.upload_file(str(path), self._bucket, self._key(self._settings.metrics_key))

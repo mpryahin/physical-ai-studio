@@ -55,7 +55,7 @@ When running Studio with Docker Compose, set these variables in `application/doc
 
 1. In Studio, open **Settings**, then **Training Targets**.
 2. Under **Add a training target**, select **SSH Remote Trainer**.
-3. Select **Deploy AWS stack**.
+3. Select **Deploy AWS stack**. The template requires **US East (N. Virginia)** (`us-east-1`).
 4. Set **Policy to train** to the policy that will run on this trainer.
 5. Paste the SSH public key corresponding to the private key on the Studio host.
 6. Click apply and wait until the stack status is `CREATE_COMPLETE`.
@@ -70,11 +70,11 @@ Open the completed stack's **Outputs** tab, then return to the **Add training ta
 2. Select **Connection details**.
 3. Copy the stack outputs into the form:
 
-| CloudFormation output | Studio field    |
-| --------------------- | --------------- |
-| `SshHost`             | **Host**        |
-| `SshPort`             | **Port**        |
-| `SshUserName`         | **User**        |
+| CloudFormation output | Studio field |
+| --------------------- | ------------ |
+| `SshHost`             | **Host**     |
+| `SshPort`             | **Port**     |
+| `SshUserName`         | **User**     |
 
 4. Set **Key path** to the private key file corresponding to the public key passed to CloudFormation. The path is resolved on the Studio backend host.
 5. Select **Add training target**.
@@ -86,7 +86,7 @@ Studio automatically assigns an available local loopback port for each SSH train
 The **AWS Provider** training target submits one-off training jobs to AWS Batch. Studio supports one AWS provider with the fixed name **AWS Provider**. Studio uses the AWS SDK credential chain on its backend host to assume the configured Studio role.
 
 1. Open **Settings**, then **Training Targets**, and select **AWS Provider**.
-2. Deploy the linked AWS Batch CloudFormation stack, or provision equivalent resources with Terraform or another tool.
+2. Deploy the linked AWS Batch CloudFormation stack in **US East (N. Virginia)** (`us-east-1`), or provision equivalent resources with Terraform or another tool.
 3. Enter the stack's `ConfigurationUri` output in **S3 configuration file URI**.
 4. Select **Add training target**.
 
@@ -98,22 +98,38 @@ Terraform and other provisioning tools can publish the same JSON document to an 
 
 ```json
 {
-	"schema_version": 1,
-	"region": "eu-west-1",
-	"studio_role_arn": "arn:aws:iam::123456789012:role/studio",
-	"bucket": "my-training-jobs",
-	"targets": {
-		"g4dn.xlarge": {
-			"queue": "my-training-queue",
-			"job_definition": "my-training-definition:1"
-		}
-	}
+  "schema_version": 1,
+  "region": "eu-west-1",
+  "studio_role_arn": "arn:aws:iam::123456789012:role/studio",
+  "bucket": "my-training-jobs",
+  "targets": {
+    "g4dn.xlarge": {
+      "queue": "my-training-queue",
+      "job_definition": "my-training-definition:1"
+    }
+  }
 }
 ```
 
 `bucket` identifies the bucket for datasets, progress, and model artifacts. Each `targets` entry associates an instance type with its Batch queue and job definition. The provisioned compute environment and job definition must match that entry. At least one target is required; documents are limited to 64 KiB and schema version 1.
 
 Studio stores the resolved resource configuration with the training target. After provisioning changes, open **Edit** and select **Save changes** to reload the S3 document. Existing AWS Batch registrations without a configuration URI require one when edited. An upgrade rejects databases containing multiple AWS providers; remove the extra registrations before upgrading.
+
+### Train with AWS Batch
+
+Select **AWS Provider** in the training dialog and choose a policy. Studio selects its instance type, queue, and job definition automatically:
+
+| Policy       | Instance type  |
+| ------------ | -------------- |
+| ACT, SmolVLA | `g4dn.2xlarge` |
+| Pi0.5        | `g6e.2xlarge`  |
+| MolmoAct2    | `g7e.8xlarge`  |
+
+Only policies with a provisioned target appear. AWS Batch targets use the declared capabilities of the CUDA trainer image; they do not expose an HTTP policy-discovery endpoint or require a GPU selection.
+
+Studio uploads the dataset snapshot and training specification to S3, submits a Batch job, monitors Batch state and S3 progress, and downloads the completed model. Canceling training terminates the Batch job. Restarting Studio reattaches to submitted jobs using their persisted Batch job IDs and resource configuration.
+
+Container stdout and stderr are collected in CloudWatch Logs and relayed into Studio's job logs. Live metric snapshots are published to S3 and streamed through Studio's metrics endpoint. Existing deployments need a CloudFormation stack update to grant the Studio role `logs:GetLogEvents` on the trainer log group, and a rebuilt trainer image to publish live metrics. A job remains running while AWS Batch reports it running, unless the trainer explicitly reports failure; a traceback alone does not imply that the container exited.
 
 ## Remove an AWS trainer
 

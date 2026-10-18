@@ -1,6 +1,7 @@
 import asyncio
 import csv
 import json
+import time
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
@@ -71,6 +72,55 @@ class ModelMetricsService:
             logger.debug("Remote metrics stream cancelled for {}", remote_job_id)
         except GeneratorExit:
             logger.debug("Remote metrics stream closed for {}", remote_job_id)
+
+    @staticmethod
+    async def tail_batch_csv_file(trainer_url: str, job_id: str) -> AsyncGenerator[ServerSentEvent]:
+        """Stream successive metric snapshots published by a Batch trainer to S3."""
+        from botocore.exceptions import BotoCoreError, ClientError
+
+        from services.aws_batch import _make_session, aws_batch_connection_from_url
+
+        connection = aws_batch_connection_from_url(trainer_url)
+        client = None
+        session_created = 0.0
+        rows_sent = 0
+        try:
+            while True:
+                if client is None or time.monotonic() - session_created > 600:
+                    session = await asyncio.to_thread(_make_session, connection)
+                    client = session.client("s3")
+                    session_created = time.monotonic()
+                try:
+                    response = await asyncio.to_thread(
+                        client.get_object, Bucket=connection.bucket, Key=f"jobs/{job_id}/metrics.csv"
+                    )
+                    body = response["Body"]
+                    try:
+                        contents = (await asyncio.to_thread(body.read)).decode("utf-8")
+                    finally:
+                        body.close()
+                except ClientError as error:
+                    if error.response["Error"]["Code"] not in {"NoSuchKey", "404"}:
+                        raise
+                    await asyncio.sleep(5)
+                    continue
+                lines = contents.splitlines(keepends=True)
+                if lines and not lines[-1].endswith("\n"):
+                    lines.pop()
+                rows = list(csv.DictReader(lines))
+                for row in rows[rows_sent:]:
+                    data = {
+                        key.replace("/", "_"): ModelMetricsService._parse_value(value) for key, value in row.items()
+                    }
+                    yield ServerSentEvent(data=json.dumps(data))
+                rows_sent = max(rows_sent, len(rows))
+                await asyncio.sleep(5)
+        except (BotoCoreError, ClientError) as error:
+            logger.warning("Batch metrics stream failed for {}: {}", job_id, error)
+        except asyncio.CancelledError:
+            logger.debug("Batch metrics stream cancelled for {}", job_id)
+        except GeneratorExit:
+            logger.debug("Batch metrics stream closed for {}", job_id)
 
     @staticmethod
     async def empty_metrics_stream() -> AsyncGenerator[ServerSentEvent]:

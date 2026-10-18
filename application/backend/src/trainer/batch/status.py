@@ -17,6 +17,7 @@ from trainer.schemas import TrainerJobStatus
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     from trainer.batch.storage import JobStorage
 
@@ -34,12 +35,20 @@ class BatchJobStatus(BaseModel):
 class StatusReporter:
     """Throttle progress writes to ``status.json``; terminal states always flush."""
 
-    def __init__(self, storage: JobStorage, interval_s: float, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(
+        self,
+        storage: JobStorage,
+        interval_s: float,
+        clock: Callable[[], float] = time.monotonic,
+        *,
+        metrics_paths: tuple[Path, ...] = (),
+    ) -> None:
         self._storage = storage
         self._interval_s = interval_s
         self._clock = clock
         self._last_write: float | None = None
         self._lock = threading.Lock()
+        self._metrics_paths = metrics_paths
 
     def report(self, progress: int, message: str | None, extra_info: dict[str, Any] | None) -> None:
         """``ProgressFn``-compatible callback for ``run_training_job``."""
@@ -65,6 +74,13 @@ class StatusReporter:
         payload = BatchJobStatus(
             status=status, progress=progress, message=message, extra_info=extra_info, updated_at=datetime.now(tz=UTC)
         )
+        try:
+            for path in self._metrics_paths:
+                if path.is_file():
+                    self._storage.put_metrics(path)
+                    break
+        except Exception:
+            logger.opt(exception=True).warning("Failed to publish metrics.csv")
         try:
             self._storage.put_status(payload)
         except Exception:
